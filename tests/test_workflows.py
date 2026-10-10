@@ -151,8 +151,8 @@ class WorkflowTests(unittest.TestCase):
         declared = set(re.findall(r"^    - (\S+)$", network, re.MULTILINE))
         self.assertLessEqual({"mise-versions.jdx.dev", "tuf-repo-cdn.sigstore.dev"}, declared)
         compiled = (root / "copilot-worker.lock.yml").read_text(encoding="utf-8")
-        domains = re.search(r'\\"allowDomains\\":(\[.*?\])', compiled)[1]
-        self.assertEqual(declared, set(json.loads(domains.replace('\\"', '"'))))
+        config = json.loads(re.search(r"printf '%s\\n' '(\{.*\})' >", compiled)[1])
+        self.assertEqual(declared, set(config["network"]["allowDomains"]))
 
     def test_launch_titles_identify_task_and_target_without_changing_tick_identity(self):
         coordinator = (Path(__file__).resolve().parents[1] /

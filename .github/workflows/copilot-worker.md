@@ -45,6 +45,7 @@ engine:
   args: ["--reasoning-effort", "high"]
   bare: true
   env:
+    GH_AW_MAX_TURNS: "${{ '' }}"
     AWF_CHROOT_IDENTITY_HOME: /tmp/review-loop-worker-home
     XDG_CACHE_HOME: /tmp/review-loop-worker-home/.cache
     GRADLE_USER_HOME: /tmp/review-loop-worker-home/.gradle
@@ -89,20 +90,28 @@ tools:
   github: false
   edit:
   bash: ["*"]
-timeout-minutes: 20
-max-turns: 100
+timeout-minutes: 360
+max-ai-credits: -1
+max-daily-ai-credits: -1
 jobs:
   agent:
-    timeout-minutes: 30
+    timeout-minutes: 360
+  detection:
+    timeout-minutes: 360
   conclusion:
     permissions:
       issues: none
 safe-outputs:
+  timeout-minutes: 360
   threat-detection:
+    max-ai-credits: -1
+    engine-timeout: 0
+    max-turns: 0
     engine:
       id: copilot
       version: "1.0.93"
       env:
+        GH_AW_MAX_TURNS: "${{ '' }}"
         GIT_AUTHOR_NAME: github-actions[bot]
         GIT_AUTHOR_EMAIL: github-actions[bot]@users.noreply.github.com
         GIT_COMMITTER_NAME: github-actions[bot]
@@ -215,8 +224,7 @@ Stay focused on that task, preserve intended behavior and don't do unrelated cle
 Source changes require appropriate existing formatting and focused checks.
 Use the inherited writable HOME, `JAVA_HOME` and `GRADLE_USER_HOME`; preserve AWF's
 `JAVA_TOOL_OPTIONS` proxy settings. Record actual commands and failures, never
-claim a missing tool, denied dependency or blocked check passed. Reserve time to
-write the result before the 20-minute worker limit.
+claim a missing tool, denied dependency or blocked check passed.
 
 ## Task objectives
 

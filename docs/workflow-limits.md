@@ -1,6 +1,6 @@
 # Workflow budgets and deadlines
 
-Task phases have no overall elapsed-time deadline. Fix CI's CI waits and Copilot-review waits do not consume a time budget, but worker counts, individual execution timeouts, reconciliation windows and artifact expiration still limit progress. Other tasks do not wait for target CI.
+Task phases have no overall elapsed-time deadline. Fix CI's CI waits and Copilot-review waits do not consume a time budget. Worker-pass counts, GitHub platform execution limits, reconciliation windows and artifact expiration still limit progress. Other tasks do not wait for target CI.
 
 This inventory covers repository-defined limits, including the generated worker configuration. GitHub platform limits and the target repository's CI timeouts apply separately. Each phase uses its pinned automation revision, so an older phase can have different limits.
 
@@ -22,36 +22,34 @@ Sources: [policy](../loop/policy.py), [live continuation](../loop/live.py), [tas
 
 | Component | Limit |
 | --- | --- |
-| Main Copilot execution | 20 minutes |
-| Main inference requests | `max-turns: 100`, compiled into AWF `maxRuns: 100` |
-| Main AI-credit budget | 1,000 AI credits by default |
-| Threat-detection execution | 10 minutes |
-| Threat-detection inference requests | 500 |
-| Threat-detection AI-credit budget | 400 AI credits by default |
-| AWF cache-miss budget | 5, separately configured for each inference proxy |
+| Main Copilot and threat-detection execution | GitHub platform job limit; no shorter repository cutoff |
+| Main and threat-detection inference requests | No repository cap |
+| Main and threat-detection AI-credit budgets | Disabled with `max-ai-credits: -1` |
+| Daily workflow AI-credit budget | Disabled with `max-daily-ai-credits: -1` |
+| AWF consecutive prompt-cache-miss budget | Disabled |
 
-Repository variables `GH_AW_DEFAULT_MAX_AI_CREDITS` and `GH_AW_DEFAULT_DETECTION_MAX_AI_CREDITS` override the credit defaults. Read those variables to determine the effective deployed budgets. Invalid noninteger credit values fall back to the defaults.
+The five-worker-pass limit remains independent of inference-request counts. The detector also disables its own per-attempt timeout and turn limit with `engine-timeout: 0` and `max-turns: 0`.
 
-These are per-execution budgets, not one shared phase-level credit budget. The AWF proxy's `maxRuns` is an inference-request limit, not the number of worker passes or Actions runs.
+Compile through `python3 tools/compiler.py`. The pinned gh-aw compiler has no disable setting for its default AWF `maxRuns` and `maxCacheMisses` fields. The repository compiler wrapper parses the two generated proxy configurations and removes those fields, leaving their network, model and isolation settings unchanged. A changed configuration shape fails compilation explicitly. Running the compiler binary directly would restore those defaults.
 
-Sources: [worker source](../.github/workflows/copilot-worker.md), [compiled worker](../.github/workflows/copilot-worker.lock.yml).
+The previous 100-request, 1,000/400-credit, five-cache-miss and 5,000-daily-credit cutoffs are no longer applied. Explicit credit disables override the compiler's repository-variable defaults.
+
+Sources: [worker source](../.github/workflows/copilot-worker.md), [compiler wrapper](../tools/compiler.py), [compiled worker](../.github/workflows/copilot-worker.lock.yml).
 
 ## Actions job timeouts
 
 | Job or step | Timeout |
 | --- | --- |
-| Coordinator `coordinate` | 10 minutes |
-| Structural verifier `verify` | 10 minutes |
-| Verification finalizer `finalize` | 5 minutes |
-| Trusted publisher/review watcher `personal_live` | 10 minutes |
-| Worker `agent`, including setup and post-processing | 30 minutes |
-| Copilot CLI step inside `agent` | 20 minutes |
-| Threat detector job and detection step | 10 minutes |
-| Generated safe-output job | 45 minutes |
+| Coordinator `coordinate` | GitHub default: 360 minutes |
+| Trusted verifier/publisher/review watcher `personal_live` | GitHub default: 360 minutes |
+| Worker `agent`, including setup and post-processing | 360 minutes |
+| Copilot CLI step inside `agent` | 360 minutes, also bounded by its job |
+| Threat detector job and detection step | 360 minutes |
+| Generated safe-output job | 360 minutes |
 | Shared waiter job | 65 minutes |
-| Repository validation job | 15 minutes |
+| Repository validation job | GitHub default: 360 minutes |
 
-Generated pre-activation, activation and conclusion jobs have no explicit timeout in this repository; GitHub's platform default applies. The 30-minute agent-job timeout is not a timeout for the entire multi-job worker workflow.
+Generated pre-activation, activation and conclusion jobs have no explicit timeout in this repository; GitHub's platform default applies. The pinned compiler requires positive timeouts for its generated execution steps/jobs, so these explicitly use GitHub's six-hour hosted-runner job limit instead of the compiler's shorter defaults. There is no additional early-finalization cutoff. The waiter retains its 55-minute handoff and 65-minute job timeout; handoff continues tasks in a fresh runner instead of stopping them.
 
 Workers are serialized per repository/PR without cancelling in-progress work. The shared waiter permits one running job globally, with a queued successor. Coordinator work is serialized by request/target/run.
 
@@ -170,3 +168,5 @@ Sources: [Docker test runner](../tools/test_docker.py), [compiler](../tools/comp
 ## Unused declarations
 
 `MAX_ACTIVATION_DISPATCHES = 2` in [policy](../loop/policy.py) has no callers. It is not an active budget.
+
+`DEFAULTS.worker_timeout_minutes = 30` remains in frozen request metadata for protocol compatibility. No execution path uses it as a timeout; Actions uses the job/step settings above.

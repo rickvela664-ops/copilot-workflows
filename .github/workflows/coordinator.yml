@@ -44,7 +44,6 @@ jobs:
     if: github.repository == 'trask/copilot-workflows' && (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.operation == 'tick' && startsWith(github.ref, 'refs/heads/review-loop-revisions/')))
     environment: protected
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
     concurrency:
       group: central-review-loop-coordinate-${{ inputs.previous_request || inputs.target || github.run_id }}
       cancel-in-progress: false
@@ -116,7 +115,6 @@ jobs:
     if: needs.coordinate.outputs.live == 'true'
     environment: protected
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
     permissions:
       contents: write
       actions: read

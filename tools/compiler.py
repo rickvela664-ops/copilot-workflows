@@ -1,8 +1,10 @@
 """Install a checksum-pinned compiler locally, never as a global gh extension."""
 
 import hashlib
+import json
 import os
 import platform
+import re
 import subprocess
 import sys
 import urllib.request
@@ -37,6 +39,22 @@ def main():
             "--action-tag", REVISION, "--no-check-update", "--validate"] + sys.argv[1:]
     subprocess.run(args, cwd=root, check=True,
                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+    compiled = root / ".github" / "workflows" / "copilot-worker.lock.yml"
+    text = compiled.read_text(encoding="utf-8")
+    # This pinned compiler cannot disable its default proxy invocation/cache caps.
+    def uncapped_proxy(match):
+        config = json.loads(match[2])
+        for field in ("maxRuns", "maxCacheMisses"):
+            del config["apiProxy"][field]
+        return match[1] + json.dumps(config, separators=(",", ":")) + match[3]
+
+    text, count = re.subn(
+        r"(?m)^(\s+printf '%s\\n' ')(\{.*\})"
+        r"""(' > "\$\{RUNNER_TEMP\}/gh-aw/awf-config\.json")$""",
+        uncapped_proxy, text)
+    if count != 2:
+        raise RuntimeError(f"Expected two generated AWF configurations, found {count}")
+    compiled.write_text(text, encoding="utf-8", newline="\n")
 
 
 if __name__ == "__main__":
