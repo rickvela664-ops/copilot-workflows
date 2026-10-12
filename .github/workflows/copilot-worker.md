@@ -248,9 +248,16 @@ return `blocked` rather than guessing.
   after any source edits, `clean` only after a complete no-source-change review,
   or `blocked`.
 - `pr_conflict_resolver`: merge frozen `base_sha` into frozen `frozen_sha`.
-  Read both histories first. Preserve both sides' intent and repair resulting
+  Read both histories first. Preserve both sides' current intent and repair resulting
   incompatibilities, including in files Git merged without textual conflicts.
-  Contradictory intent or incomplete history is blocked. Return `merge` with one
+  Use applicable repository instructions and both histories to distinguish current
+  requirements from superseded choices. When incoming guidance and changes explicitly
+  supersede earlier wording, apply that guidance consistently to migrated or copied
+  content. A historical restoration commit alone does not override that evidence.
+  Do not assume incoming changes automatically override deliberate PR behavior.
+  Block only when the evidence leaves current requirements incompatible or history
+  incomplete. Explain the evidence for supersession or the unresolved conflict in
+  diagnostics. Return `merge` with one
   merge commit, head first and base second, `no_change` if the base is already
   incorporated, or `blocked`. Never return `fixes` for this task. Never rebase
   or land the PR.

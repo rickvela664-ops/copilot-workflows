@@ -257,6 +257,18 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("a description-only correction uses `clean` for self-review or `no_change` otherwise", worker)
         self.assertIn("without an empty commit or extra worker pass", worker)
 
+    def test_conflict_workers_distinguish_superseded_choices_from_current_requirements(self):
+        worker = (Path(__file__).resolve().parents[1] / ".github" /
+                  "workflows" / "copilot-worker.md").read_text(encoding="utf-8")
+        objective = " ".join(worker.split("- `pr_conflict_resolver`:", 1)[1]
+                             .split("- `ci_fix`:", 1)[0].split())
+        self.assertIn("Use applicable repository instructions and both histories", objective)
+        self.assertIn("apply that guidance consistently to migrated or copied content", objective)
+        self.assertIn("A historical restoration commit alone does not override that evidence", objective)
+        self.assertIn("Do not assume incoming changes automatically override deliberate PR behavior", objective)
+        self.assertIn("Block only when the evidence leaves current requirements incompatible", objective)
+        self.assertIn("Explain the evidence for supersession or the unresolved conflict in diagnostics", objective)
+
     def test_publisher_routing_exposes_names_and_presence_only_outside_live_job(self):
         root = Path(__file__).resolve().parents[1] / ".github" / "workflows"
         coordinator = (root / "coordinator.yml").read_text(encoding="utf-8")
