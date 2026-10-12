@@ -509,14 +509,44 @@ test("zero-finding Copilot summaries and informational sections do not enable fe
     const footer = "\n\n---\n\nGive feedback about Copilot approvals in [this survey](https://survey.example.com/copilot) to enter a drawing for a $150 gift card.";
     const legacy = "<!-- ccr-overview-v2 -->\n\n## Copilot review overview\n\n### \u{1f535} Needs a closer look\n\nHuman validation is recommended.\n\n**Review effort:** Balanced  \n**Findings:** None\n";
     const bodies = [cleanBody, cleanBody.replace("\n\n\u{1f9e0}", changed + resolved + "\n\n\u{1f9e0}") + footer, legacy, ""];
-    const evidence = normalizeEvidence(detail({
-        reviews: bodies.map((body) => review({ body })), threads: [thread({ isResolved: true })],
-    }), sha);
-    assert.equal(evidence.copilotBodies, 0);
+    for (const body of bodies) {
+        const evidence = normalizeEvidence(detail({
+            reviews: [review({ body })], threads: [thread({ isResolved: true })],
+        }), sha);
+        assert.equal(evidence.copilotBodies, 0);
+        const pr = { ...normalizePull(pull(), repo, state(), account), tasks: ["copilot_review"], evidence };
+        assert.equal(taskPresentation(pr, "copilot_review", true).disabled, true);
+        assert.equal(actionEvidence(pr, "copilot_review").label, "No Copilot feedback");
+        assert.equal(actionEvidence(pr, "copilot_review").detail, "No Copilot feedback to address.");
+    }
+});
+
+test("the latest current-head Copilot summary supersedes earlier feedback without hiding open threads", () => {
+    const older = review({ body: "**1 open finding**", submittedAt: "2026-10-11T23:57:11Z" });
+    const latest = review({ body: cleanBody + "\n\n<strong>1 resolved since last review</strong>",
+        submittedAt: "2026-10-12T03:30:20Z" });
+    const pr = { ...normalizePull(pull(), repo, state(), account), tasks: ["copilot_review"] };
+    for (const reviews of [[older, latest], [latest, older]]) {
+        pr.evidence = normalizeEvidence(detail({ reviews, threads: [thread({ isResolved: true })] }), sha);
+        assert.equal(pr.evidence.copilotBodies, 0);
+        assert.equal(pr.evidence.copilotReviewOutdated, false);
+        assert.equal(actionEvidence(pr, "copilot_review").label, "No Copilot feedback");
+        assert.equal(taskPresentation(pr, "copilot_review", true).disabled, true);
+    }
+    pr.evidence = normalizeEvidence(detail({ reviews: [older, latest], threads: [thread({ isOutdated: true })] }), sha);
+    assert.equal(pr.evidence.copilotBodies, 0);
+    assert.equal(actionEvidence(pr, "copilot_review").label, "Open Copilot threads");
+    assert.equal(taskPresentation(pr, "copilot_review", true).disabled, false);
+});
+
+test("new feedback in the latest current-head Copilot summary remains actionable", () => {
+    const older = review({ submittedAt: "2026-10-11T23:57:11Z" });
+    const latest = review({ body: "**1 open finding**", submittedAt: "2026-10-12T03:30:20Z" });
+    const evidence = normalizeEvidence(detail({ reviews: [older, latest] }), sha);
+    assert.equal(evidence.copilotBodies, 1);
     const pr = { ...normalizePull(pull(), repo, state(), account), tasks: ["copilot_review"], evidence };
-    assert.equal(taskPresentation(pr, "copilot_review", true).disabled, true);
-    assert.equal(actionEvidence(pr, "copilot_review").label, "No Copilot feedback");
-    assert.equal(actionEvidence(pr, "copilot_review").detail, "No Copilot feedback to address.");
+    assert.equal(actionEvidence(pr, "copilot_review").label, "Copilot review-body feedback");
+    assert.equal(taskPresentation(pr, "copilot_review", true).disabled, false);
 });
 
 test("only submitted verified current-head review bodies count, and unknown text remains actionable", () => {

@@ -184,9 +184,8 @@ export function normalizeEvidence(detail, sha, { summaryCI = false } = {}) {
     if (!Array.isArray(reviews?.nodes) || reviews.pageInfo?.hasNextPage !== false) {
         throw new Error("Live Copilot review-body status is incomplete.");
     }
-    let copilotBodies = 0;
+    let latestCopilotReview = null;
     let copilotReviewed = false;
-    let copilotCurrentReview = false;
     for (const review of reviews.nodes) {
         if (!review || typeof review.state !== "string") throw new Error("Live review state is incomplete.");
         if (copilot(review.author) && SUBMITTED_REVIEWS.has(review.state) && review.submittedAt) {
@@ -196,12 +195,15 @@ export function normalizeEvidence(detail, sha, { summaryCI = false } = {}) {
         if (!review.submittedAt || typeof review.body !== "string") {
             throw new Error("Live Copilot review body is incomplete.");
         }
-        copilotCurrentReview = true;
-        if (review.state === "CHANGES_REQUESTED" || hasCopilotBodyFeedback(review.body)) copilotBodies++;
+        if (!latestCopilotReview || review.submittedAt >= latestCopilotReview.submittedAt) {
+            latestCopilotReview = review;
+        }
     }
+    const copilotBodies = latestCopilotReview &&
+        (latestCopilotReview.state === "CHANGES_REQUESTED" || hasCopilotBodyFeedback(latestCopilotReview.body)) ? 1 : 0;
     return {
         sha, conflicts, copilotThreads, copilotBodies, ...ci,
-        copilotReviewOutdated: copilotReviewed && !copilotCurrentReview,
+        copilotReviewOutdated: copilotReviewed && !latestCopilotReview,
     };
 }
 
