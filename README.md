@@ -25,6 +25,8 @@ The sandbox permits Mise's version metadata service at `mise-versions.jdx.dev` a
 
 Fix CI reobserves checks that become pending during diagnosis freeze and completes
 when the latest exact-head evidence passes, without consuming a worker pass.
+Pending Actions runs affect the frozen CI selection only when they share a workflow
+and event with a selected check. Unrelated runs do not invalidate diagnosis setup.
 Conflict workers return `outcome: "merge"` for their two-parent candidate.
 
 For example, launch a description task:

@@ -1245,6 +1245,25 @@ class CIRepairTests(unittest.TestCase):
                 self.assertRaisesRegex(Rejected, "attempts or evidence changed"):
             acquire(read, frozen, directory)
 
+    def test_direct_ci_setup_ignores_pending_runs_outside_frozen_checks(self):
+        for changes in ({"workflow_id": 999}, {"event": "dynamic"}):
+            with self.subTest(changes=changes):
+                req, read = self.context()
+                frozen = freeze(read, 1, REVISION, 100, FIXTURE, loop_kind="ci_fix")
+                read.runs.append(dict(read.runs[0], id=201, run_number=2,
+                                      status="in_progress", conclusion=None, **changes))
+                read.checks.append(dict(
+                    read.checks[0], id=334, name="copilot", status="in_progress", conclusion=None,
+                    details_url=f"https://github.com/{FIXTURE}/actions/runs/201/job/334"))
+                self.assertEqual(frozen["ci_evidence"], same_attempts(read, frozen))
+                with tempfile.TemporaryDirectory() as directory:
+                    acquired = acquire(read, frozen, directory)
+                    self.assertEqual("failed", acquired["inputs"]["ci_evidence"]["decision"])
+                    self.assertEqual([333], [failure["id"]
+                                            for failure in acquired["inputs"]["ci_evidence"]["failures"]])
+                    self.assertEqual(read.log, Path(acquired["inputs"]["ci_evidence"]
+                                                   ["failures"][0]["log_path"]).read_bytes())
+
     def test_read_credential_cannot_download_logs_from_another_repository(self):
         source = SourceAPI("read-token", FIXTURE)
         with self.assertRaises(Rejected):
@@ -1397,7 +1416,7 @@ class CIRepairTests(unittest.TestCase):
         newer.update(status="queued", conclusion=None)
         self.assertEqual("pending", collect(read, req, [CI_CHECK])["decision"])
         read.signed_download.assert_not_called()
-        newer.update(status="completed", conclusion="success", workflow_id=999)
+        newer.update(status="queued", conclusion=None, workflow_id=999)
         evidence = collect(read, req, [CI_CHECK])
         self.assertEqual("failed", evidence["decision"])
         self.assertEqual([333], [f["id"] for f in evidence["failures"]])
@@ -1641,6 +1660,9 @@ class CIRepairTests(unittest.TestCase):
         read.runs[0]["status"] = "queued"
         self.assertEqual("pending", collect(read, req, [CI_CHECK])["decision"])
         read.runs[0]["status"] = "completed"
+        read.runs.append(dict(read.runs[0], id=201, run_number=2, status="queued", conclusion=None))
+        self.assertEqual("pending", collect(read, req, [CI_CHECK])["decision"])
+        read.runs.pop()
         state = checkpoint(req)
         state.update(stage="published", effects=[], iteration=1,
                      publications=[{"sha": req["frozen_sha"], "effect": "push", "confirmed_at": 100}])

@@ -100,7 +100,12 @@ def collect(api, request, required, *, log_dir=None):
                              "evidence": text})
     active_runs = api.pages(f"repos/{repo}/actions/runs?head_sha={sha}", "workflow_runs")
     require(len(active_runs) <= 100, "CI run collection exceeds limit")
-    latest = latest_workflows(repo, sha, [*active_runs, *(r for r, _ in executions.values())])
+    runs = [*active_runs, *(r for r, _ in executions.values())]
+    latest = latest_workflows(repo, sha, runs)
+    bound_run_ids = set(executions) | {
+        run["id"] for run in request.get("ci_evidence", {}).get("runs", [])}
+    selected_workflows = latest_workflows(
+        repo, sha, [run for run in runs if run["id"] in bound_run_ids])
     def current(item):
         identity = item["actions"]
         if not identity:
@@ -144,8 +149,8 @@ def collect(api, request, required, *, log_dir=None):
         failure["evidence"] = text
     names = [s["name"] for s in selected]
     decisions = [s["decision"] for s in selected]
-    active = any(r["status"] in {"queued", "in_progress", "waiting", "pending", "requested"}
-                 for r in latest.values())
+    active = any(latest[key]["status"] in {"queued", "in_progress", "waiting", "pending", "requested"}
+                 for key in selected_workflows)
     duplicate = any(names.count(n) > 1 and (
         any(not s["actions"] for s in selected if s["name"] == n)
         or len({(s["actions"]["workflow_id"], executions[s["actions"]["run_id"]][0]["event"])
