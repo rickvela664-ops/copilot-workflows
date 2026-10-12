@@ -1,5 +1,6 @@
 ---
 name: Copilot review worker
+strict: false
 run-name: "Copilot worker ${{ inputs.request_id }}"
 on:
   workflow_dispatch:
@@ -30,6 +31,8 @@ observability:
   otlp:
     endpoint: []
     if-missing: ignore
+features:
+  disable-xpia-prompt: true
 environment: protected
 env:
   OTEL_EXPORTER_OTLP_HEADERS: ""

@@ -1264,6 +1264,41 @@ class CIRepairTests(unittest.TestCase):
                     self.assertEqual(read.log, Path(acquired["inputs"]["ci_evidence"]
                                                    ["failures"][0]["log_path"]).read_bytes())
 
+    def test_default_ci_selection_can_complete_after_a_one_off_agent_run(self):
+        req, read = self.context()
+        agent = dict(read.runs[0], id=201, workflow_id=999, event="dynamic",
+                     check_suite_id=501, path="dynamic/copilot-swe-agent/copilot",
+                     conclusion="success")
+        read.runs.append(agent)
+        read.checks.append(dict(
+            read.checks[0], id=334, name="copilot", conclusion="success",
+            check_suite={"id": 501},
+            details_url=f"https://github.com/{FIXTURE}/actions/runs/201/job/334"))
+        read.jobs.append(dict(
+            read.jobs[0], id=334, run_id=201, name="copilot",
+            check_run_url=f"https://api.github.com/repos/{FIXTURE}/check-runs/334"))
+        original = read.call
+        read.call = lambda path, *args, **kwargs: (
+            copy.deepcopy(agent) if path == f"repos/{FIXTURE}/actions/runs/201"
+            else original(path, *args, **kwargs))
+        req.update(freeze(read, 1, REVISION, 100, FIXTURE, loop_kind="ci_fix"))
+        req["publication"]["required_checks"] = req["ci_evidence"]["required"]
+        read.runs.pop()
+        read.checks.pop()
+        read.jobs.pop()
+        new_head = "e" * 40
+        read.pr["head"]["sha"] = new_head
+        read.runs[0].update(head_sha=new_head, conclusion="success")
+        read.checks[0].update(head_sha=new_head, conclusion="success")
+        state = checkpoint(req)
+        state.update(stage="waiting_ci", expected_sha=new_head, iteration=1, effects=[],
+                     publications=[{"sha": new_head, "effect": "push", "confirmed_at": 100}])
+        store, name = stored(state)
+        complete = watch_ci_fix(store, name, state, read, 1001)
+        self.assertEqual("complete", complete["stage"])
+        self.assertEqual("exact_target_CI_passed", complete["reason"])
+        self.assertEqual([CI_CHECK], complete["ci"]["required"])
+
     def test_read_credential_cannot_download_logs_from_another_repository(self):
         source = SourceAPI("read-token", FIXTURE)
         with self.assertRaises(Rejected):

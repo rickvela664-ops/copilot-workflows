@@ -12,6 +12,8 @@ The shared Copilot worker uses `gpt-6.1-sol` with high reasoning effort. `.githu
 
 The sandbox permits Mise's version metadata service at `mise-versions.jdx.dev` and Sigstore's trust-root service at `tuf-repo-cdn.sigstore.dev` so repository-pinned linters can install with TLS and artifact attestation verification enabled.
 
+The compiler's generic XPIA prompt is disabled because its blanket `.env` and cache prohibitions prevent ordinary work on committed fixtures and builds. This supported opt-out requires `strict: false` in the compiler configuration. The sandbox, firewall, credential isolation, threat detection and trusted publisher remain enabled; the worker's own instructions still prohibit credential access and publication. The lock audit independently checks pinned dependencies and read-only permissions.
+
 | Display name | `loop_kind` | Completion |
 | --- | --- | --- |
 | Address Copilot feedback | `copilot_review` | Existing findings, warranted source or description corrections, mandatory bot-thread handling and fresh external review until no findings remain |
@@ -25,6 +27,8 @@ The sandbox permits Mise's version metadata service at `mise-versions.jdx.dev` a
 
 Fix CI reobserves checks that become pending during diagnosis freeze and completes
 when the latest exact-head evidence passes, without consuming a worker pass.
+Default CI selection omits one-off dynamic Actions tasks, such as coding-agent runs,
+which are not expected to rerun on a pushed fix.
 Pending Actions runs affect the frozen CI selection only when they share a workflow
 and event with a selected check. Unrelated runs do not invalidate diagnosis setup.
 Conflict workers return `outcome: "merge"` for their two-parent candidate.

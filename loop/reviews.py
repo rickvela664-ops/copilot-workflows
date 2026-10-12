@@ -103,7 +103,15 @@ def ci_items(api, repo, sha, *, latest_statuses=False):
 
 def select_checks(api, request):
     checks, statuses = ci_items(api, request["repo"], request["frozen_sha"])
-    selected = {c["name"] for c in checks}
+    runs = api.pages(f"repos/{request['repo']}/actions/runs?head_sha={request['frozen_sha']}", "workflow_runs")
+    require(len(runs) <= 100, "CI run collection exceeds limit")
+    task_suites = {run["check_suite_id"] for run in runs
+                   if run["head_sha"] == request["frozen_sha"]
+                   and run["repository"]["full_name"] == request["repo"]
+                   and run["event"] == "dynamic"
+                   and type(run["check_suite_id"]) is int and run["check_suite_id"] > 0}
+    selected = {c["name"] for c in checks if not (
+        c.get("app", {}).get("id") == 15368 and c.get("check_suite", {}).get("id") in task_suites)}
     selected.update(s["context"] for s in statuses)
     require(len(selected) <= 100
             and all(isinstance(name, str) and 0 < len(name) <= 200 for name in selected),
