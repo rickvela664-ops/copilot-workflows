@@ -58,11 +58,11 @@ class API:
             raise DeadlineReached("API execution deadline reached")
         return min(60, remaining)
 
-    def retry_read(self, attempt, failure):
+    def retry_transient(self, attempt, failure):
         delay = attempt + 1
         if self.deadline is not None and self.deadline - time.monotonic() <= delay:
             raise DeadlineReached("API retry would exceed execution deadline")
-        print(f"READ RETRY: {failure}; attempt {attempt + 2}/3", file=sys.stderr)
+        print(f"API RETRY: {failure}; attempt {attempt + 2}/3", file=sys.stderr)
         time.sleep(delay)
 
     def call(self, path, method="GET", data=None, raw=False, limit=MAX_RESPONSE, accept=None,
@@ -80,6 +80,9 @@ class API:
         body = None if data is None else json.dumps(data).encode()
         req = urllib.request.Request("https://api.github.com/" + path, data=body,
                                      headers=headers, method=method)
+        # Identical blob uploads create the same content-addressed object, without moving a ref.
+        retryable = method == "GET" or (method == "POST"
+                                       and path == f"repos/{CENTRAL}/git/blobs")
         for attempt in range(3):
             timeout = self.read_timeout()
             try:
@@ -87,7 +90,7 @@ class API:
                     payload = response.read() if limit is None else response.read(limit + 1)
             except urllib.error.HTTPError as error:
                 error.close()
-                if method != "GET" or attempt == 2 or error.code not in {500, 502, 503, 504}:
+                if not retryable or attempt == 2 or error.code not in {500, 502, 503, 504}:
                     # Do not echo response bodies, which can include untrusted text.
                     limits = {}
                     for header in ("X-RateLimit-Limit", "X-RateLimit-Remaining",
@@ -113,11 +116,11 @@ class API:
             except (TimeoutError, urllib.error.URLError, ConnectionResetError,
                     ssl.SSLEOFError, http.client.IncompleteRead) as error:
                 failure = transport_failure(error)
-                if method != "GET" or attempt == 2 or failure is None:
+                if not retryable or attempt == 2 or failure is None:
                     raise
             else:
                 break
-            self.retry_read(attempt, f"GitHub API GET {failure}; endpoint={path}")
+            self.retry_transient(attempt, f"GitHub API {method} {failure}; endpoint={path}")
         require(limit is None or len(payload) <= limit, "API response exceeds limit")
         return payload if raw else (json.loads(payload) if payload else None)
 
@@ -157,7 +160,7 @@ class API:
                 failure = transport_failure(error)
                 if attempt == 2 or failure is None:
                     raise
-            self.retry_read(attempt, f"GitHub signed download GET {failure}; endpoint={path}")
+            self.retry_transient(attempt, f"GitHub signed download GET {failure}; endpoint={path}")
 
     def _signed_download(self, path, limit=None, *, log_windows=(), token=None, destination=None):
         self.authorize(path, "GET", None)

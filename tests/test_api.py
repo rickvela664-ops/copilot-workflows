@@ -1,5 +1,6 @@
 import http.client
 import io
+import json
 import ssl
 import tempfile
 import unittest
@@ -9,6 +10,7 @@ from pathlib import Path
 
 from loop.api import API, APIError, DeadlineReached
 from loop.policy import CENTRAL, Rejected
+from loop.state import State
 
 
 def response(payload=b'{"sha":"example"}'):
@@ -52,6 +54,70 @@ class APITests(unittest.TestCase):
         self.assertEqual(504, error.exception.status)
         self.assertEqual(3, open_request.call_count)
         self.assertEqual([call(1), call(2)], sleep.call_args_list)
+
+    def test_transient_checkpoint_blob_upload_retries_identical_content(self):
+        data = {"content": '{"checkpoint":"frozen"}', "encoding": "utf-8"}
+        for failure in (*(http_error(status) for status in (500, 502, 503, 504)),
+                        TimeoutError("response lost"),
+                        urllib.error.URLError(ssl.SSLEOFError("TLS connection closed")),
+                        ConnectionResetError("connection reset"),
+                        http.client.IncompleteRead(b'{"partial":')):
+            with self.subTest(failure=type(failure).__name__), \
+                    patch("loop.api.urllib.request.urlopen",
+                          side_effect=[failure, response()]) as open_request, \
+                    patch("loop.api.time.sleep") as sleep, \
+                    patch("loop.api.sys.stderr", new_callable=io.StringIO) as stderr:
+                self.assertEqual({"sha": "example"}, API("test-token").call(
+                    f"repos/{CENTRAL}/git/blobs", "POST", data))
+            self.assertEqual(2, open_request.call_count)
+            first, second = [entry.args[0] for entry in open_request.call_args_list]
+            self.assertIs(first, second)
+            self.assertEqual("POST", first.get_method())
+            self.assertEqual(data, json.loads(first.data))
+            sleep.assert_called_once_with(1)
+            self.assertIn("GitHub API POST", stderr.getvalue())
+            self.assertNotIn("test-token", stderr.getvalue())
+            self.assertNotIn("frozen", stderr.getvalue())
+
+    def test_persistent_blob_upload_failure_is_explicit_and_bounded(self):
+        for failure in (http_error(502), TimeoutError("response lost")):
+            with self.subTest(failure=type(failure).__name__), \
+                    patch("loop.api.urllib.request.urlopen", side_effect=failure) as open_request, \
+                    patch("loop.api.time.sleep") as sleep, \
+                    patch("loop.api.sys.stderr", new_callable=io.StringIO), \
+                    self.assertRaises(APIError if isinstance(failure, urllib.error.HTTPError)
+                                      else TimeoutError):
+                API().call(f"repos/{CENTRAL}/git/blobs", "POST",
+                           {"content": "checkpoint", "encoding": "utf-8"})
+            self.assertEqual(3, open_request.call_count)
+            self.assertEqual([call(1), call(2)], sleep.call_args_list)
+
+    def test_checkpoint_write_survives_blob_502_with_one_nonforce_ref_update(self):
+        from loop.coordinator import checkpoint
+        from tests.test_loop import request
+        before = checkpoint(request())
+        after = dict(before, generation=2)
+        store = State(API())
+        with patch.object(store, "snapshot", return_value=(
+                "a" * 40, "b" * 40, {"pr-v2-210933087-1.json": before})), \
+                patch("loop.api.urllib.request.urlopen", side_effect=[
+                    http_error(502), response(b'{"sha":"blob"}'),
+                    response(b'{"sha":"tree"}'), response(b'{"sha":"commit"}'),
+                    response()]) as open_request, \
+                patch("loop.api.time.sleep") as sleep, \
+                patch("loop.api.sys.stderr", new_callable=io.StringIO):
+            store.write("pr-v2-210933087-1.json", after, before)
+        requests = [entry.args[0] for entry in open_request.call_args_list]
+        self.assertEqual(5, len(requests))
+        self.assertIs(requests[0], requests[1])
+        self.assertEqual(after, json.loads(json.loads(requests[0].data)["content"]))
+        self.assertEqual(["blobs", "blobs", "trees", "commits", "review-loop-state"],
+                         [entry.full_url.rsplit("/", 1)[1] for entry in requests])
+        self.assertEqual("PATCH", requests[-1].get_method())
+        self.assertEqual({"sha": "commit", "force": False}, json.loads(requests[-1].data))
+        self.assertEqual(["a" * 40], json.loads(requests[-2].data)["parents"])
+        self.assertEqual("commit", store.written_head)
+        sleep.assert_called_once_with(1)
 
     def test_get_timeout_retries_including_partial_response_reads(self):
         for failure in (TimeoutError("connection timed out"),
@@ -106,15 +172,17 @@ class APITests(unittest.TestCase):
             self.assertEqual([call(1), call(2)], sleep.call_args_list)
 
     def test_permission_validation_and_rate_limit_failures_are_not_retried(self):
-        for status in (400, 401, 403, 404, 409, 422, 429):
-            with self.subTest(status=status), \
-                    patch("loop.api.urllib.request.urlopen", side_effect=http_error(status)) as open_request, \
-                    patch("loop.api.time.sleep") as sleep, \
-                    self.assertRaises(APIError) as error:
-                API().call(f"repos/{CENTRAL}/actions/runs")
-            self.assertEqual(status, error.exception.status)
-            open_request.assert_called_once()
-            sleep.assert_not_called()
+        for method, path in (("GET", f"repos/{CENTRAL}/actions/runs"),
+                             ("POST", f"repos/{CENTRAL}/git/blobs")):
+            for status in (400, 401, 403, 404, 409, 422, 429):
+                with self.subTest(method=method, status=status), \
+                        patch("loop.api.urllib.request.urlopen", side_effect=http_error(status)) as open_request, \
+                        patch("loop.api.time.sleep") as sleep, \
+                        self.assertRaises(APIError) as error:
+                    API().call(path, method, {})
+                self.assertEqual(status, error.exception.status)
+                open_request.assert_called_once()
+                sleep.assert_not_called()
 
     def test_rate_limit_errors_report_numeric_headers_without_exposing_response_text(self):
         failure = http_error(403)
@@ -136,8 +204,11 @@ class APITests(unittest.TestCase):
         self.assertTrue(failure.fp.closed)
         sleep.assert_not_called()
 
-    def test_mutations_and_graphql_posts_are_never_retried(self):
+    def test_other_mutations_and_graphql_posts_are_never_retried(self):
         for method, path in (("POST", f"repos/{CENTRAL}/actions/workflows/coordinator.yml/dispatches"),
+                             ("POST", f"repos/{CENTRAL}/git/trees"),
+                             ("POST", f"repos/{CENTRAL}/git/commits"),
+                             ("POST", f"repos/{CENTRAL}/git/refs"),
                              ("PATCH", f"repos/{CENTRAL}/git/refs/heads/review-loop-state"),
                              ("PUT", f"repos/{CENTRAL}/contents/checkpoint.json"),
                              ("DELETE", f"repos/{CENTRAL}/actions/runs/1"),
@@ -166,15 +237,18 @@ class APITests(unittest.TestCase):
         self.assertEqual(110, api.deadline)
 
     def test_retry_backoff_cannot_outlive_deadline(self):
-        api = API()
-        api.deadline = 101
-        with patch("loop.api.time.monotonic", return_value=100), \
-                patch("loop.api.urllib.request.urlopen", side_effect=http_error(504)) as open_request, \
-                patch("loop.api.time.sleep") as sleep, \
-                self.assertRaises(DeadlineReached):
-            api.call(f"repos/{CENTRAL}/actions/runs")
-        open_request.assert_called_once()
-        sleep.assert_not_called()
+        for method, path in (("GET", f"repos/{CENTRAL}/actions/runs"),
+                             ("POST", f"repos/{CENTRAL}/git/blobs")):
+            api = API()
+            api.deadline = 101
+            with self.subTest(method=method), \
+                    patch("loop.api.time.monotonic", return_value=100), \
+                    patch("loop.api.urllib.request.urlopen", side_effect=http_error(504)) as open_request, \
+                    patch("loop.api.time.sleep") as sleep, \
+                    self.assertRaises(DeadlineReached):
+                api.call(path, method, {})
+            open_request.assert_called_once()
+            sleep.assert_not_called()
 
     def test_deadline_expiring_after_backoff_prevents_another_request(self):
         api = API()

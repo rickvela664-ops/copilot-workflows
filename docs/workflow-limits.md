@@ -84,8 +84,8 @@ Sources: [waiter](../loop/waiter.py), [coordinator](../loop/coordinator.py), [li
 | --- | --- |
 | Python GitHub HTTP operations | 60-second timeout per request, shortened by the waiter's remaining execution window |
 | Streaming signed log/file download | Additional 60-second elapsed download window |
-| Transient REST GET or signed-download failure | 3 attempts total, with 1-second and 2-second backoffs |
-| Mutation requests, including GraphQL POSTs | No automatic retry |
+| Transient REST GET, central Git blob upload or signed-download failure | 3 attempts total, with 1-second and 2-second backoffs |
+| Other mutation requests, including GraphQL POSTs | No automatic retry |
 | Newly created revision-pin visibility | 3 confirmation attempts, with 1-second and 2-second backoffs |
 | State-write contention | 20 attempts, randomized backoff capped at 1 second |
 | Acknowledged state-write visibility | 5 attempts, waiting 1, 2, 3 and 4 seconds |
@@ -94,7 +94,7 @@ Sources: [waiter](../loop/waiter.py), [coordinator](../loop/coordinator.py), [li
 | Trusted Git push | 120 seconds |
 | Source/verifier Git processes on Linux | 60 CPU seconds and 512 MiB address space per process |
 
-Read retries apply to designated transient server and transport failures. Certificate verification and permission failures are not retried. Git resource limits constrain individual trusted subprocesses, not arbitrary worker builds as a whole.
+Retries apply to designated transient server and transport failures. Identical Git blob uploads are safe to repeat because they create the same immutable object without moving a branch ref. Certificate verification and permission failures are not retried. Git resource limits constrain individual trusted subprocesses, not arbitrary worker builds as a whole.
 
 Sources: [API client](../loop/api.py), [revision pins](../loop/revisions.py), [state store](../loop/state.py), [source acquisition](../loop/source.py), [verifier](../loop/verify.py), [publisher](../loop/publication.py), [waiter](../loop/waiter.py).
 
