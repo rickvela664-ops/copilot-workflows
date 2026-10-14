@@ -595,11 +595,17 @@ export class GitHub {
                 rejected.rejected = true;
                 throw rejected;
             }
-            if (response.status !== successStatus || result.code !== 0) throw new Error("Unconfirmed write response.");
+            if (response.status !== successStatus) {
+                throw new GitHubError(`${label} returned HTTP ${response.status}; expected HTTP ${successStatus}.`);
+            }
+            if (result.code !== 0) {
+                throw new GitHubError(`GitHub CLI exited with code ${result.code} after HTTP ${response.status}.`);
+            }
             return response;
         } catch (error) {
             if (error.rejected) throw error;
-            const uncertain = new GitHubError(`${label} outcome is uncertain. Inspect central Actions and refresh; do not blindly retry.`);
+            const detail = error instanceof GitHubError ? ` ${error.message}` : "";
+            const uncertain = new GitHubError(`${label} outcome is uncertain.${detail} Inspect central Actions and refresh; do not blindly retry.`);
             uncertain.uncertain = true;
             throw uncertain;
         }

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { runInNewContext } from "node:vm";
-import { GitHub, GitHubError, CENTRAL, MAX_RESPONSE } from "./github.mjs";
+import { GitHub, GitHubError, CENTRAL, MAX_RESPONSE, runGh } from "./github.mjs";
 import { PrDashboard, decodeDashboard } from "./pr-dashboard.mjs";
 import { Checkpoints } from "./state.mjs";
 import { REPOSITORIES, DEFAULT_REPOSITORY, LAUNCH_OWNER_ID, dashboardPath, targetParts } from "./repositories.mjs";
@@ -1841,6 +1841,54 @@ test("GitHub dispatches bind the documented exact run receipt and never retry", 
         assert.equal(count, 1);
     }
     await assert.rejects(new GitHub(async () => response(null, 403)).dispatch(inputs), /rejected.*403/);
+});
+
+test("uncertain canvas launches retain sanitized CLI diagnostics without retrying", async () => {
+    for (const [failure, stderr, expected] of [
+        [{ code: 1 }, "connection reset by peer", /Network connection closed before GitHub returned an HTTP response/],
+        [{ code: null, killed: true }, "", /60-second time limit/],
+        [{ code: 1 }, "To get started, run gh auth login.", /could not authenticate/],
+        [{ code: 1 }, "x509: certificate signed by unknown authority", /TLS certificate validation failed/],
+    ]) {
+        const c = controller();
+        await c.canvas.refresh();
+        let calls = 0;
+        const github = new GitHub((args) => runGh(args, (_command, _args, _options, callback) => {
+            calls++;
+            callback(failure, "", `${stderr}\nprivate diagnostic must-not-echo`);
+        }));
+        c.github.dispatch = (inputs) => github.dispatch(inputs);
+        await assert.rejects(c.canvas.launch({ target, kind: "self_review", confirmed: true }), (error) =>
+            error.uncertain && expected.test(error.message) && !/must-not-echo/.test(error.message));
+        const dispatch = c.canvas.state().prs[0].dispatch;
+        assert.equal(dispatch.status, "uncertain");
+        assert.match(dispatch.message, expected);
+        assert.match(dispatch.message, /do not blindly retry/);
+        await assert.rejects(c.canvas.launch({ target, kind: "self_review", confirmed: true }), expected);
+        await c.canvas.refresh();
+        assert.equal(calls, 1);
+    }
+});
+
+test("uncertain writes identify the HTTP response without exposing its body", async () => {
+    const inputs = { operation: "launch", target, loop_kind: "self_review", publication_auth: "fine_grained_pat" };
+    for (const status of [204, 500]) {
+        let calls = 0;
+        const github = new GitHub(async () => {
+            calls++;
+            return response({ private: "must-not-echo" }, status);
+        });
+        await assert.rejects(github.dispatch(inputs), (error) => error.uncertain &&
+            error.message.includes(`HTTP ${status}; expected HTTP 200`) && !/must-not-echo/.test(error.message));
+        assert.equal(calls, 1);
+    }
+    const cancellation = new GitHub(async () => response({ private: "must-not-echo" }, 500));
+    await assert.rejects(cancellation.cancelRun(20), (error) => error.uncertain &&
+        /HTTP 500; expected HTTP 202/.test(error.message) && !/must-not-echo/.test(error.message));
+    const missing = new GitHub(async () => ({ code: 1, stdout: "" }));
+    await assert.rejects(missing.dispatch(inputs), /no HTTP response headers/);
+    const failed = new GitHub(async () => ({ ...response({}, 200), code: 1 }));
+    await assert.rejects(failed.dispatch(inputs), /exited with code 1 after HTTP 200/);
 });
 
 test("GitHub cancels only the exact central run and never retries an ambiguous cancellation", async () => {
