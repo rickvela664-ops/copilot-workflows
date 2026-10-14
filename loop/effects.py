@@ -173,11 +173,19 @@ def advance(store, name, state, central, read, publisher, now):
     effect["status"] = "uncertain"
     if kind == "reply":
         intent["body_hash"] = hashlib.sha256(reply_body(state, effect).encode()).hexdigest()
+    previous_effects = state["effects"]
     state = cas(store, name, state, effects=effects, next_check_at=now)
-    owned(state)
-    guard(store, name, state, read, int(time.time()))
-    publisher.identity(dict(request, frozen_sha=state["expected_sha"]))
-    thread, _, changed = live_context(read, state, effect)
+    try:
+        owned(state)
+        guard(store, name, state, read, int(time.time()))
+        publisher.identity(dict(request, frozen_sha=state["expected_sha"]))
+        thread, _, changed = live_context(read, state, effect)
+    except (APIError, OSError) as error:
+        # These checks precede the mutation, so the new intent has no uncertain side effect.
+        cas(store, name, state, effects=previous_effects, stage="blocked",
+            reason="thread_preflight_read_failed", error=type(error).__name__ + ": " + str(error)[:1000],
+            next_check_at=int(time.time()))
+        raise
     require(not changed and not thread["resolved"],
             "Thread changed before mutation; preserve its intent")
     bound = dict(intent)

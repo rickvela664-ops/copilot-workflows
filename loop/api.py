@@ -80,9 +80,12 @@ class API:
         body = None if data is None else json.dumps(data).encode()
         req = urllib.request.Request("https://api.github.com/" + path, data=body,
                                      headers=headers, method=method)
+        query = data.get("query") if isinstance(data, dict) else None
         # Identical blob uploads create the same content-addressed object, without moving a ref.
         retryable = method == "GET" or (method == "POST"
-                                       and path == f"repos/{CENTRAL}/git/blobs")
+                                       and (path == f"repos/{CENTRAL}/git/blobs"
+                                            or path == "graphql" and isinstance(query, str)
+                                            and query.lstrip().startswith("query")))
         for attempt in range(3):
             timeout = self.read_timeout()
             try:

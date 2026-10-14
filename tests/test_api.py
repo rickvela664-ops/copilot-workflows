@@ -55,6 +55,37 @@ class APITests(unittest.TestCase):
         self.assertEqual(3, open_request.call_count)
         self.assertEqual([call(1), call(2)], sleep.call_args_list)
 
+    def test_read_only_graphql_retries_transient_errors_with_identical_query_and_variables(self):
+        query = "\nquery($id: ID!) { node(id: $id) { id } }"
+        variables = {"id": "frozen-node"}
+        for failure in (http_error(500), http_error(502), TimeoutError("response lost"),
+                        urllib.error.URLError(ssl.SSLEOFError("TLS connection closed"))):
+            with self.subTest(failure=type(failure).__name__), \
+                    patch("loop.api.urllib.request.urlopen", side_effect=[
+                        failure, response(b'{"data":{"node":{"id":"frozen-node"}}}')]) as open_request, \
+                    patch("loop.api.time.sleep") as sleep, \
+                    patch("loop.api.sys.stderr", new_callable=io.StringIO):
+                self.assertEqual({"node": {"id": "frozen-node"}},
+                                 API().graphql(query, variables))
+            self.assertEqual(2, open_request.call_count)
+            first, second = [entry.args[0] for entry in open_request.call_args_list]
+            self.assertIs(first, second)
+            self.assertEqual({"query": query, "variables": variables}, json.loads(first.data))
+            sleep.assert_called_once_with(1)
+
+    def test_persistent_graphql_read_failure_is_bounded_and_partial_data_is_rejected(self):
+        with patch("loop.api.urllib.request.urlopen", side_effect=http_error(500)) as open_request, \
+                patch("loop.api.time.sleep") as sleep, \
+                patch("loop.api.sys.stderr", new_callable=io.StringIO), \
+                self.assertRaisesRegex(APIError, "POST failed with HTTP 500"):
+            API().graphql("query { viewer { login } }", {})
+        self.assertEqual(3, open_request.call_count)
+        self.assertEqual([call(1), call(2)], sleep.call_args_list)
+        with patch("loop.api.urllib.request.urlopen", return_value=response(
+                b'{"data":{"viewer":null},"errors":[{"message":"read failed"}]}')), \
+                self.assertRaisesRegex(Rejected, "GraphQL failed"):
+            API().graphql("query { viewer { login } }", {})
+
     def test_transient_checkpoint_blob_upload_retries_identical_content(self):
         data = {"content": '{"checkpoint":"frozen"}', "encoding": "utf-8"}
         for failure in (*(http_error(status) for status in (500, 502, 503, 504)),
@@ -204,7 +235,7 @@ class APITests(unittest.TestCase):
         self.assertTrue(failure.fp.closed)
         sleep.assert_not_called()
 
-    def test_other_mutations_and_graphql_posts_are_never_retried(self):
+    def test_other_mutations_and_graphql_mutations_are_never_retried(self):
         for method, path in (("POST", f"repos/{CENTRAL}/actions/workflows/coordinator.yml/dispatches"),
                              ("POST", f"repos/{CENTRAL}/git/trees"),
                              ("POST", f"repos/{CENTRAL}/git/commits"),
@@ -220,7 +251,9 @@ class APITests(unittest.TestCase):
                         patch("loop.api.urllib.request.urlopen", side_effect=failure) as open_request, \
                         patch("loop.api.time.sleep") as sleep, \
                         self.assertRaises(APIError if isinstance(failure, urllib.error.HTTPError) else type(failure)):
-                    API().call(path, method=method, data={})
+                        API().call(path, method=method, data=(
+                            {"query": "mutation { resolveReviewThread(input:{threadId:\"frozen\"}) { thread { id } } }"}
+                            if path == "graphql" else {}))
                 open_request.assert_called_once()
                 sleep.assert_not_called()
 
@@ -237,8 +270,9 @@ class APITests(unittest.TestCase):
         self.assertEqual(110, api.deadline)
 
     def test_retry_backoff_cannot_outlive_deadline(self):
-        for method, path in (("GET", f"repos/{CENTRAL}/actions/runs"),
-                             ("POST", f"repos/{CENTRAL}/git/blobs")):
+        for method, path, data in (("GET", f"repos/{CENTRAL}/actions/runs", None),
+                                   ("POST", f"repos/{CENTRAL}/git/blobs", {}),
+                                   ("POST", "graphql", {"query": "query { viewer { login } }"})):
             api = API()
             api.deadline = 101
             with self.subTest(method=method), \
@@ -246,7 +280,7 @@ class APITests(unittest.TestCase):
                     patch("loop.api.urllib.request.urlopen", side_effect=http_error(504)) as open_request, \
                     patch("loop.api.time.sleep") as sleep, \
                     self.assertRaises(DeadlineReached):
-                api.call(path, method, {})
+                api.call(path, method, data)
             open_request.assert_called_once()
             sleep.assert_not_called()
 

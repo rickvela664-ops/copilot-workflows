@@ -47,7 +47,7 @@ Checkpoints record PR/head/base identities, CI run/attempt/job metadata and task
 
 Verification and publication independently fetch the same source and reacquire needed diff/log evidence. Worker results bind the acquired diff hash, and changed CI runs or attempts stop publication. Conflict source acquisition deepens until both selected tips reach the merge base, without a commit-count limit. Conflict workers use applicable instructions and both histories to distinguish current requirements from superseded choices. Unresolved incompatible requirements block instead of choosing a side. Existing pinned phases retain their original input transport.
 
-Read-only API requests and signed log/artifact downloads retry transient server errors, timeouts, TLS EOFs and connection resets up to three attempts within the execution deadline. Checkpoint Git blob uploads use the same retries: identical content creates the same immutable object without moving a branch ref. Interrupted downloads restart with a fresh signed URL and discard partial evidence. Certificate verification and permission failures are not retried, and all other mutations are never retried.
+Read-only API requests, including explicit GraphQL queries, and signed log/artifact downloads retry transient server errors, timeouts, TLS EOFs and connection resets up to three attempts within the execution deadline. Checkpoint Git blob uploads use the same retries: identical content creates the same immutable object without moving a branch ref. Interrupted downloads restart with a fresh signed URL and discard partial evidence. Certificate verification and permission failures are not retried, and all other mutations are never retried.
 
 Upstream commits do not invalidate a frozen task. PR-head changes and retargeting to a different base branch still stop it. Conflict resolution merges the launch-time base snapshot; newer upstream commits are not included in that merge. Later review/fix and CI-repair passes freeze the current base without resetting their worker budget. Description and pending-review publication still recheck the actual GitHub PR diff.
 
@@ -136,6 +136,8 @@ Only the trusted publisher handles threads. Fixed replies start `Addressed in <c
 The publisher confirms the exact branch ref and PR head before replying, confirms the reply before resolving, and confirms resolution before requesting fresh review. Human intervention or changed conversation prevents automatic handling of that thread and records the reason. Already resolved threads are explicitly skipped. An outdated or already-addressed comment still gets an explanatory reply and resolution; a fixed thread gets its mapped-commit reply. An outdated thread alone does not establish review clearance.
 
 Every effect has a durable intent. Lost replies can reconcile only against a unique exact body/actor/root marker match. A lost resolution response without a saved matching acknowledgment remains uncertain even if the thread is now resolved. The loop never blindly retries mutations, discards an uncertain intent, or treats thread resolution as review clearance.
+
+A failed API read during the final thread preflight blocks with `thread_preflight_read_failed` and restores the previous thread effects: no reply or resolution was attempted. This permits a fresh phase instead of falsely requiring uncertain-effect reconciliation. Failures after a mutation is attempted retain their intent.
 
 ## PR workflows canvas
 

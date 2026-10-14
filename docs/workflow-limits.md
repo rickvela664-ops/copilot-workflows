@@ -84,8 +84,8 @@ Sources: [waiter](../loop/waiter.py), [coordinator](../loop/coordinator.py), [li
 | --- | --- |
 | Python GitHub HTTP operations | 60-second timeout per request, shortened by the waiter's remaining execution window |
 | Streaming signed log/file download | Additional 60-second elapsed download window |
-| Transient REST GET, central Git blob upload or signed-download failure | 3 attempts total, with 1-second and 2-second backoffs |
-| Other mutation requests, including GraphQL POSTs | No automatic retry |
+| Transient REST GET, read-only GraphQL query, central Git blob upload or signed-download failure | 3 attempts total, with 1-second and 2-second backoffs |
+| Other mutation requests, including GraphQL mutations | No automatic retry |
 | Newly created revision-pin visibility | 3 confirmation attempts, with 1-second and 2-second backoffs |
 | State-write contention | 20 attempts, randomized backoff capped at 1 second |
 | Acknowledged state-write visibility | 5 attempts, waiting 1, 2, 3 and 4 seconds |

@@ -268,6 +268,31 @@ class EffectTests(unittest.TestCase):
         self.assertEqual("thread_reply_uncertain_no_retry", state["reason"])
         self.assertEqual(1, len(publisher.posts))
 
+    def test_failed_preflight_read_does_not_leave_an_unattempted_thread_effect_uncertain(self):
+        for kind in ("reply", "resolution"):
+            for error in (APIError(500, "GraphQL ownership read failed"), TimeoutError("read timed out")):
+                with self.subTest(kind=kind, error=type(error).__name__):
+                    store, name, state, read, publisher = self.context()
+                    state = self.step(store, name, state, read, publisher)
+                    if kind == "resolution":
+                        state = self.step(store, name, state, read, publisher)
+                    effects = copy.deepcopy(state["effects"])
+                    posts = copy.deepcopy(publisher.posts)
+                    with patch.object(publisher, "identity", side_effect=[{}, error]), \
+                            self.assertRaises(type(error)) as raised:
+                        self.step(store, name, state, read, publisher)
+                    self.assertIs(error, raised.exception)
+                    state = store.entries[name]
+                    self.assertEqual("blocked", state["stage"])
+                    self.assertEqual("thread_preflight_read_failed", state["reason"])
+                    self.assertIn(str(error), state["error"])
+                    self.assertEqual(effects, state["effects"])
+                    self.assertFalse(pending(state))
+                    self.assertEqual(posts, publisher.posts)
+                    with patch("loop.coordinator.executions_quiescent") as stopped:
+                        quiescent(Mock(), state)
+                    stopped.assert_called_once()
+
     def test_unique_observed_reply_reconciles_without_second_post(self):
         from loop.api import APIError
         store, name, state, read, publisher = self.context()
