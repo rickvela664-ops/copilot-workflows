@@ -11,16 +11,26 @@ def description_diff(text):
 
 
 def diff_anchors(text):
+    positions, counts = diff_positions(text)
+    return {path: list(lines.values()) for path, lines in positions.items()}, counts
+
+
+def diff_positions(text):
     require(isinstance(text, str) and "\x00" not in text,
             "Unavailable or unsupported complete PR diff")
     from loop.verify import patch_sections
-    anchors, counts = {}, {}
+    positions, counts = {}, {}
     for section, _, path, added, deleted in patch_sections(text.encode("utf-8")):
         require(path not in counts, "Duplicate PR diff file")
-        counts[path], anchors[path] = [0, 0], []
+        counts[path], positions[path] = [0, 0], {}
         old_left, new_left, line = 0, 0, 0
+        position = None
         for record in section.decode("utf-8").split("\n")[1:]:
+            if position is not None:
+                position += 1
             if record.startswith("@@"):
+                if position is None:
+                    position = 0
                 require(old_left == new_left == 0, "Truncated PR diff")
                 match = re.fullmatch(r"@@ -([0-9]+)(?:,([0-9]+))? \+([0-9]+)(?:,([0-9]+))? @@.*", record)
                 require(match is not None, "Malformed PR diff hunk")
@@ -30,7 +40,7 @@ def diff_anchors(text):
             elif old_left or new_left:
                 require(record[:1] in {" ", "+", "-", "\\"}, "Truncated PR diff contents")
                 if record.startswith("+"):
-                    anchors[path].append(line)
+                    positions[path][position] = line
                     counts[path][0] += 1
                 if record.startswith("-"):
                     counts[path][1] += 1
@@ -42,7 +52,7 @@ def diff_anchors(text):
                 require(old_left >= 0 and new_left >= 0, "Malformed PR diff lengths")
         require(old_left == new_left == 0 and counts[path] == [added or 0, deleted or 0],
                 "Truncated or inconsistent PR diff")
-    return anchors, counts
+    return positions, counts
 
 
 def collect_diff(api, request):
@@ -75,6 +85,7 @@ def check_diff(api, request, input_identity=None):
                 "Authoritative PR diff changed")
     else:
         require(current == request["pr_diff"], "Authoritative PR diff changed")
+    return current
 
 
 def proposal(value):

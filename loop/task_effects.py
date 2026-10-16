@@ -21,11 +21,22 @@ def pending_reviews(api, request):
             if r["user"]["id"] == request["authorized_actor_id"] and r["state"] == "PENDING"]
 
 
-def review_matches(api, request, review, expected):
+def review_matches(api, request, review, expected, diff):
     if (review["user"]["id"] != request["authorized_actor_id"] or review["state"] != "PENDING"
             or review.get("submitted_at") is not None or review["commit_id"] != request["frozen_sha"]):
         return False
     actual = api.pages(f"repos/{request['repo']}/pulls/{request['pr']}/reviews/{review['id']}/comments")
+    positions = None
+    for comment in actual:
+        if comment.get("line") is None and comment.get("side") is None:
+            if positions is None:
+                from loop.recommendations import diff_positions
+                positions, _ = diff_positions(diff["text"])
+            comment["line"] = positions.get(comment.get("path"), {}).get(comment.get("position"))
+            comment["side"] = "RIGHT"
+        if (type(comment.get("line")) is not int or comment.get("side") != "RIGHT"
+                or comment.get("start_line") is not None or comment.get("start_side") is not None):
+            return False
     fields = ("path", "line", "side", "body")
     return (len(actual) == len(expected) and
             sorted((tuple(c.get(k) for k in fields) for c in actual)) ==
@@ -164,11 +175,11 @@ def confirm_task(store, name, state, read, now):
                 "Metadata drift during effect reconciliation")
     else:
         from loop.recommendations import check_diff
-        check_diff(read, request, state["report"]["dispositions"].get("input_identity"))
+        diff = check_diff(read, request, state["report"]["dispositions"].get("input_identity"))
         reviews = pending_reviews(read, request)
         matches = [r for r in reviews if r["id"] not in intent["baseline_review_ids"]
                    and ("review_id" not in intent or r["id"] == intent["review_id"])
-                   and review_matches(read, request, r, intent["payload"]["comments"])]
+                   and review_matches(read, request, r, intent["payload"]["comments"], diff)]
         require(len(matches) <= 1, "Ambiguous pending review effect")
         if len(matches) == 1:
             return cas(store, name, state, stage="complete", reason="viewer_pending_review_confirmed",

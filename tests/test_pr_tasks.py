@@ -22,7 +22,7 @@ from loop.policy import (AUTHOR_ID, BOT_IDENTITY_PATH, CENTRAL, LOOP_KINDS, Reje
                          canonical, digest, effect_repository, eligible, pipeline_budget)
 from loop.policy import iso, pipeline_limit, staged_source
 from loop.publication import PublisherAPI, acceptance, authenticated_push, evidence, import_candidate
-from loop.recommendations import collect_diff, comments, description_diff, diff_anchors
+from loop.recommendations import collect_diff, comments, description_diff, diff_anchors, diff_positions
 from loop.source import SourceAPI, acquire_source, import_source, package_source
 from loop.task_effects import confirm_task, publish_task
 from loop.revisions import revision_ref
@@ -461,6 +461,34 @@ class TaskContractsTests(unittest.TestCase):
         with self.assertRaises(Rejected):
             diff_anchors(GOOD_PATCH.decode().replace("+new\n", ""))
 
+    def test_diff_positions_count_hunks_context_deletions_and_reset_per_file(self):
+        text = textwrap.dedent("""\
+            diff --git a/Foo.java b/Foo.java
+            --- a/Foo.java
+            +++ b/Foo.java
+            @@ -10,3 +10,4 @@
+             context
+            -old
+            +new
+            +extra
+             tail
+            @@ -30 +31 @@
+            -old end
+            \\ No newline at end of file
+            +new end
+            \\ No newline at end of file
+            diff --git a/Bar.java b/Bar.java
+            new file mode 100644
+            --- /dev/null
+            +++ b/Bar.java
+            @@ -0,0 +1,2 @@
+            +first
+            +second
+            """)
+        self.assertEqual(({"Foo.java": {3: 11, 4: 12, 9: 31}, "Bar.java": {1: 1, 2: 2}},
+                          {"Foo.java": [3, 2], "Bar.java": [2, 0]}), diff_positions(text))
+        self.assertEqual({"Foo.java": [11, 12, 31], "Bar.java": [1, 2]}, diff_anchors(text)[0])
+
     def test_no_change_simplify_and_consistency_finish_with_failed_CI(self):
         for kind in ("pr_simplify", "pr_consistency"):
             req = task_request(kind)
@@ -745,6 +773,85 @@ class NonCodeEffectsTests(unittest.TestCase):
             complete = confirm_task(store, name, pending, read, 101)
             self.assertEqual("complete", complete["stage"])
             self.assertEqual(1, len(publisher.posts))
+
+    def test_position_only_pending_reviews_reconcile_after_acknowledged_or_lost_responses(self):
+        for direct, lost in ((False, False), (True, False), (True, True)):
+            for modern_fields in (False, True):
+                state, read, store, name, publisher = self.context("pr_review")
+                if direct:
+                    state["request"]["input_mode"] = "direct"
+                    diff = state["request"].pop("pr_diff")
+                    state["report"]["dispositions"].update(
+                        request_digest=digest(state["request"]),
+                        input_identity={"pr_diff_sha256": diff["sha256"]})
+                    store, name = stored(state)
+                publisher.uncertain = lost
+                original = publisher.call
+
+                def create(*args, **kwargs):
+                    try:
+                        return original(*args, **kwargs)
+                    finally:
+                        read.comments = [dict(comment, position=2) for comment in read.comments]
+                        for comment in read.comments:
+                            comment.pop("line")
+                            comment.pop("side")
+                            if modern_fields:
+                                comment.update(line=None, side=None)
+
+                with self.subTest(direct=direct, lost=lost, modern_fields=modern_fields), \
+                        patch.object(publisher, "call", side_effect=create):
+                    if lost:
+                        with self.assertRaises(APIError):
+                            self.publish(state, read, store, name, publisher)
+                        complete = confirm_task(store, name, store.entries[name], read, 101)
+                    else:
+                        complete = self.publish(state, read, store, name, publisher)
+                self.assertEqual("complete", complete["stage"])
+                self.assertEqual("confirmed", complete["task_intent"]["status"])
+                self.assertEqual(42, complete["task_completion"]["review_id"])
+                self.assertEqual(1, len(publisher.posts))
+                self.assertEqual(1, len(read.reviews))
+                self.assertEqual("PENDING", read.reviews[0]["state"])
+
+    def test_position_fallback_preserves_review_anchor_body_identity_and_diff_guards(self):
+        for change in ("body", "path", "position", "modern_line", "modern_side", "range",
+                       "commit", "actor", "submitted", "diff"):
+            state, read, store, name, publisher = self.context("pr_review")
+            publisher.uncertain = True
+            with self.assertRaises(APIError):
+                self.publish(state, read, store, name, publisher)
+            read.comments = [dict(read.comments[0], line=None, side=None, position=2)]
+            comment = read.comments[0]
+            if change == "body":
+                comment["body"] = "Human edit"
+            elif change == "path":
+                comment["path"] = "Other.java"
+            elif change == "position":
+                comment["position"] = 1
+            elif change == "modern_line":
+                comment.update(line=2, side="RIGHT")
+            elif change == "modern_side":
+                comment.update(line=1, side="LEFT")
+            elif change == "range":
+                comment.update(start_line=1, start_side="RIGHT")
+            elif change == "commit":
+                read.reviews[0]["commit_id"] = "0" * 40
+            elif change == "actor":
+                read.reviews[0]["user"]["id"] += 1
+            elif change == "submitted":
+                read.reviews[0]["submitted_at"] = iso(101)
+            else:
+                read.diff = read.diff.replace("+new", "+changed")
+            with self.subTest(change=change):
+                if change == "actor":
+                    waiting = confirm_task(store, name, store.entries[name], read, 101)
+                    self.assertEqual("task_effect_intent", waiting["stage"])
+                else:
+                    with self.assertRaises(Rejected):
+                        confirm_task(store, name, store.entries[name], read, 101)
+            self.assertEqual(1, len(publisher.posts))
+            self.assertEqual(1, len(read.reviews))
 
     def test_cancellation_and_permission_denial_never_create_another_effect(self):
         state, read, store, name, publisher = self.context("pr_review")
