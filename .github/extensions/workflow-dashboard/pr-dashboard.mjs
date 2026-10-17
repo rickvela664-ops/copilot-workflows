@@ -21,7 +21,7 @@ export function decodeDashboard(response) {
     } catch {
         throw new Error("Dashboard state contains malformed JSON or UTF-8.");
     }
-    if (state?.version !== 18 || !state.prs || typeof state.prs !== "object" || Array.isArray(state.prs) ||
+    if (![18, 19].includes(state?.version) || !state.prs || typeof state.prs !== "object" || Array.isArray(state.prs) ||
         !Array.isArray(state.draft_pr_numbers) || Object.keys(state.prs).length > 10000 ||
         !Object.keys(state.prs).every((key) => /^[1-9][0-9]{0,7}$/.test(key))) {
         throw new Error("Dashboard state has an unsupported version or shape.");

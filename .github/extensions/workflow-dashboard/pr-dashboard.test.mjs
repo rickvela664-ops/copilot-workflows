@@ -38,7 +38,7 @@ const cached = (changes = {}) => ({
     failed: false, facts: facts(), ...changes,
 });
 const state = (record = cached()) => ({
-    version: 18, prs: record ? { "12": record } : {}, draft_pr_numbers: [],
+    version: 19, prs: record ? { "12": record } : {}, draft_pr_numbers: [],
 });
 const connection = (nodes = [], more = false) => ({ nodes, pageInfo: { hasNextPage: more, endCursor: more ? "next" : null } });
 const check = (conclusion = "SUCCESS", changes = {}) => ({
@@ -309,12 +309,31 @@ test("late run-log title reads cannot leak titles or warnings across repositorie
 });
 
 test("dashboard decoding validates shape, version, Git identity, UTF-8 and size", () => {
-    assert.deepEqual(decodeDashboard(file(state())), state());
+    for (const version of [18, 19]) {
+        const value = { ...state(), version };
+        assert.deepEqual(decodeDashboard(file(value)), value);
+    }
     for (const invalid of [
         { ...file(state()), sha: "c".repeat(40) }, { ...file(state()), size: 1024 * 1024 + 1 },
-        file({ ...state(), version: 19 }), file({ ...state(), prs: [] }), file({ ...state(), draft_pr_numbers: null }),
+        file({ ...state(), version: 20 }), file({ ...state(), prs: [] }), file({ ...state(), draft_pr_numbers: null }),
         file({ ...state(), prs: { "../12": cached() } }),
     ]) assert.throws(() => decodeDashboard(invalid), /Dashboard/);
+});
+
+test("version 19 dashboard refresh restores reviewer routing and facts", async () => {
+    const c = controller({ dashboardState: state(cached({
+        facts: facts({ approval_count: 1, ci_failing_count: 2, conflicts: "yes",
+            waiting_since: "2026-10-16T12:00:00Z" }),
+    })) });
+    const refreshed = await c.canvas.refresh();
+    assert.deepEqual(refreshed.prWarnings, []);
+    const [pr] = filterPulls(refreshed.prs, { reviewers: true });
+    assert.equal(pr.dashboardStatus, "current");
+    assert.equal(pr.routeLabel, "Waiting on reviewers");
+    assert.equal(pr.approved, true);
+    assert.equal(pr.ciFailing, 2);
+    assert.equal(pr.conflicts, "yes");
+    assert.equal(pr.waitingSince, "2026-10-16T12:00:00Z");
 });
 
 test("file-conflict evidence ignores aggregate mergeability and other failed merge conditions", () => {
