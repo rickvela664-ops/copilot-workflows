@@ -108,6 +108,8 @@ Schedule a wake-up at the earliest notBefore time.
 </details>
 </details>
 """
+CURRENT_NO_ISSUES = CURRENT_CLEAN.replace("0 open findings", "No open issues")
+CURRENT_MISSED = "\n" + MISSED.replace("Previously missed (1)", "1 previously missed issue")
 TEST_TOKEN = "github_pat_" + "test_only_not_a_real_token" * 2
 
 
@@ -1098,6 +1100,26 @@ class AcceptanceTests(unittest.TestCase):
 
 
 class ReviewTests(unittest.TestCase):
+    def test_numbered_missed_sections_preserve_fingerprints_and_require_complete_counts(self):
+        expected = missed_fingerprints([{"kind": "body", "body": NONCLEAN + MISSED}])
+        body = CURRENT_NO_ISSUES + CURRENT_MISSED
+        self.assertEqual(expected, missed_fingerprints([{"kind": "body", "body": body}]))
+        combined = CURRENT_MISSED.replace("1 previously missed issue", "2 previously missed issues").replace(
+            "\n</details>\n</details>",
+            "\n</details>\n<details>\n<summary>Describe the continue outcome</summary>\n\n"
+            "Include continue in the validation error.\n</details>\n</details>")
+        self.assertEqual(2, len(missed_fingerprints([{
+            "kind": "body", "body": CURRENT_NO_ISSUES + combined + "\n" + CURRENT_RESOLVED}])))
+        for malformed in (
+            CURRENT_MISSED.replace("1 previously missed issue", "2 previously missed issues"),
+            CURRENT_MISSED.replace("</details>", "", 1),
+            CURRENT_MISSED.replace("Schedule a wake-up at the earliest notBefore time.",
+                                   "<details>nested finding</details>"),
+        ):
+            with self.subTest(malformed=malformed):
+                self.assertEqual([], missed_fingerprints([{
+                    "kind": "body", "body": CURRENT_NO_ISSUES + malformed}]))
+
     def test_missed_fingerprints_bind_each_body_only_finding_not_overview_wording(self):
         findings = [{"kind": "body", "body": NONCLEAN + MISSED}]
         first = missed_fingerprints(findings)
@@ -1130,14 +1152,16 @@ class ReviewTests(unittest.TestCase):
                     })
                 return value
 
-        for novel in ("inline", "body", "none", "summary_only", "malformed_body"):
+        for novel in ("inline", "body", "current_body", "none", "summary_only", "malformed_body"):
             state = live_state(stage="waiting_review")
             state["request"]["workflow_ref"] = revision_ref(REVISION)
             state["seen_inline_findings"] = inline_fingerprints(state["request"]["findings"])
             state["review_request"] = {"baseline_review_ids": [12], "recorded_at": 100, "sha": SHA}
             read = MixedRead()
             body = NONCLEAN + MISSED if novel == "body" else NONCLEAN
-            if novel == "summary_only":
+            if novel == "current_body":
+                body = CURRENT_NO_ISSUES + CURRENT_MISSED
+            elif novel == "summary_only":
                 body = body.replace("Changes recommended", "Needs a closer look")
             elif novel == "malformed_body":
                 body += MISSED.replace("(1)", "(2)")
@@ -1349,13 +1373,19 @@ class ReviewTests(unittest.TestCase):
     def test_finding_counts_and_body_only_feedback_determine_body_classification(self):
         self.assertEqual("clean", body_classification(CLEAN))
         self.assertEqual("clean", body_classification(CURRENT_CLEAN_RESOLVED))
+        self.assertEqual("clean", body_classification(CURRENT_NO_ISSUES))
+        self.assertEqual("clean", body_classification(CURRENT_CLEAN.replace("0 open findings", "0 open issues")))
         for body in (NONCLEAN, CURRENT_NONCLEAN, CURRENT_CLEAN + MISSED,
                      CLEAN + "<details><strong>Open (1)</strong> bug</details>",
-                     CURRENT_CLEAN + "\n**Findings:** 1"):
+                     CURRENT_CLEAN + "\n**Findings:** 1", CURRENT_NO_ISSUES + CURRENT_MISSED,
+                     CURRENT_NONCLEAN.replace("1 open finding", "1 open issue"),
+                     CURRENT_NONCLEAN.replace("1 open finding", "3 open issues"),
+                     CURRENT_NO_ISSUES + "\n**Findings:** 1"):
             with self.subTest(body=body):
                 self.assertEqual("findings", body_classification(body))
         for body in (None, "", "Fix the missing input guard.",
-                     CURRENT_CLEAN + "\n**Findings:** None"):
+                     CURRENT_CLEAN + "\n**Findings:** None",
+                     CURRENT_NO_ISSUES + "\n**Findings:** None"):
             with self.subTest(body=body):
                 self.assertEqual("unknown", body_classification(body))
 
@@ -1367,7 +1397,9 @@ class ReviewTests(unittest.TestCase):
                   " to enter a drawing for a $150 gift card.")
         fingerprints = missed_fingerprints([{"kind": "body", "body": NONCLEAN + MISSED}])
         self.assertEqual(1, len(fingerprints))
-        for submitted in (body, body + footer):
+        current_body = CURRENT_NO_ISSUES.replace(
+            "\n\n\U0001f9e0", CURRENT_MISSED.rstrip("\n") + "\n" + CURRENT_RESOLVED + "\n\n\U0001f9e0")
+        for submitted in (body, body + footer, current_body, current_body + footer):
             with self.subTest(body=submitted):
                 self.assertEqual("findings", body_classification(submitted))
                 self.assertEqual(fingerprints, missed_fingerprints(

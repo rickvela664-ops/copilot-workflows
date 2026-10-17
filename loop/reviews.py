@@ -13,8 +13,9 @@ def body_classification(body):
     summary = re.sub(r"\*\*|</?strong>", "", body)
     counts = re.findall(r"\bFindings:\s*(None|[0-9]+)\b", summary)
     counts += re.findall(r"\b([0-9]+) open findings?\b", summary)
-    if (any(count != "None" and count.lstrip("0") for count in counts)
-            or re.search(r"Previously missed|Open \([1-9]|New \([1-9]", summary)):
+    counts += re.findall(r"\b(No|[0-9]+) open issues?\b", summary)
+    if (any(count not in {"None", "No"} and count.lstrip("0") for count in counts)
+            or re.search(r"Previously missed|Open \([1-9]|New \([1-9]", summary, re.IGNORECASE)):
         return "findings"
     return "clean" if len(counts) == 1 else "unknown"
 
@@ -33,20 +34,21 @@ def inline_fingerprints(findings):
 def missed_fingerprints(findings):
     """Identify body-only findings in a complete counted missed section."""
     fingerprints = set()
-    section = (r"\n\n<details>\n<summary><strong>Previously missed "
-               r"\(([1-9][0-9]{0,3})\)</strong></summary>\n\n"
-               r"In code that hasn't changed since last review\n\n(.+)\n</details>")
+    section = (r"\n\n<details>\n<summary><strong>"
+               r"(?:Previously missed \(([1-9][0-9]{0,3})\)|"
+               r"([1-9][0-9]{0,3}) previously missed issues?)</strong></summary>\n\n"
+               r"In code that hasn't changed since last review\n\n(.+?\n</details>)\s*\n</details>")
     entry = re.compile(
         r"<details>\n<summary>([^\n]+)</summary>\n\n"
         r"((?:(?!</?details[>\s]).)+)\n</details>", re.DOTALL)
     for finding in findings:
         if finding["kind"] != "body" or body_classification(finding["body"]) != "findings":
             continue
-        missed = re.search(section, finding["body"].replace("\r\n", "\n"), re.DOTALL)
+        missed = re.search(section, finding["body"].replace("\r\n", "\n"), re.DOTALL | re.IGNORECASE)
         if missed is None:
             continue
-        items = list(entry.finditer(missed[2]))
-        if (len(items) != int(missed[1]) or entry.sub("", missed[2]).strip()
+        items = list(entry.finditer(missed[3]))
+        if (len(items) != int(missed[1] or missed[2]) or entry.sub("", missed[3]).strip()
                 or any(not item[2].strip() for item in items)):
             continue
         fingerprints.update(digest({"summary": item[1], "body": item[2]}) for item in items)
