@@ -95,7 +95,7 @@ function hasCopilotBodyFeedback(body) {
     const counts = [...summary.matchAll(/\bFindings:\s*(None|[0-9]+)\b|\b([0-9]+) open findings?\b|\bNo open issues\b/g)]
         .map((match) => match[1] ?? match[2] ?? "0");
     return counts.length !== 1 || counts.some((count) => count !== "None" && Number(count) > 0) ||
-        /Previously missed|Open \([1-9]|New \([1-9]/.test(summary);
+        /Previously missed|Open \([1-9]|New \([1-9]/i.test(summary);
 }
 
 function ciEvidence(rollup, summaryCI) {

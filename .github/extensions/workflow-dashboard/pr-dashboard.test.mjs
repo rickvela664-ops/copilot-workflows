@@ -593,6 +593,33 @@ test("new feedback in the latest current-head Copilot summary remains actionable
     assert.equal(taskPresentation(pr, "copilot_review", true).disabled, false);
 });
 
+test("previously missed issues override clean summaries regardless of capitalization", () => {
+    for (const summary of ["No open issues", "0 open findings"]) {
+        for (const heading of ["1 previously missed issue", "2 previously missed issues", "Previously missed (1)"]) {
+            const body = `<!-- ccr-overview-v2 -->\n\n**${summary}**\n\n<details>
+<summary><strong>${heading}</strong></summary>
+
+In code that hasn't changed since last review
+
+Missing baseline metadata collection.
+</details>`;
+            const pr = {
+                ...normalizePull(pull(), repo, state(), account), tasks: ["copilot_review"],
+                evidence: normalizeEvidence(detail({ reviews: [review({ body })] }), sha),
+            };
+            assert.equal(pr.evidence.copilotThreads, 0);
+            assert.equal(pr.evidence.copilotBodies, 1);
+            assert.equal(actionEvidence(pr, "copilot_review").label, "Copilot review-body feedback");
+            assert.equal(taskPresentation(pr, "copilot_review", true).tone, "needed");
+            assert.equal(taskPresentation(pr, "copilot_review", true).disabled, false);
+            pr.phase = { kind: "copilot_review", sha, stage: "blocked", reason: "unknown_fresh_review_body" };
+            assert.equal(taskPresentation(pr, "copilot_review", true).label, "Blocked");
+            assert.equal(taskPresentation(pr, "copilot_review", true).disabled, false);
+            assert.match(taskPresentation(pr, "copilot_review", true).detail, /with feedback/);
+        }
+    }
+});
+
 test("only submitted verified current-head review bodies count, and unknown text remains actionable", () => {
     const feedback = review({ body: "Fix the missing input guard." });
     const reviews = [
