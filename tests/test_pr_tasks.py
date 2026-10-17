@@ -859,14 +859,17 @@ class NonCodeEffectsTests(unittest.TestCase):
                 self.assertEqual("PENDING", read.reviews[0]["state"])
 
     def test_new_phase_preserves_a_stopped_acknowledged_review_and_existing_drafts(self):
-        for deleted in (False, True):
+        for cancelled, deleted in ((False, False), (False, True), (True, False), (True, True)):
             state, read, store, name, publisher = self.context("pr_review")
             with patch("loop.task_effects.confirm_task", side_effect=Rejected("Pending review changed")):
                 with self.assertRaisesRegex(Rejected, "Pending review changed"):
                     self.publish(state, read, store, name, publisher)
             prior = store.entries[name]
-            prior.update(stage="blocked", reason="task_effect_uncertain_no_retry",
-                         error="Rejected: Pending review changed")
+            prior["error"] = "Rejected: Pending review changed"
+            if cancelled:
+                prior = cancel(store, name, prior["request"]["request_id"], prior["generation"], 100)
+            else:
+                prior.update(stage="blocked", reason="task_effect_uncertain_no_retry")
             if deleted:
                 read.reviews.clear()
                 read.comments.clear()
@@ -875,10 +878,11 @@ class NonCodeEffectsTests(unittest.TestCase):
             before = copy.deepcopy(prior)
             reviews, comments = copy.deepcopy(read.reviews), copy.deepcopy(read.comments)
             fresh = dict(task_request("pr_review"), request_id="e" * 32)
-            with self.subTest(deleted=deleted):
+            with self.subTest(cancelled=cancelled, deleted=deleted):
                 _, admitted = start(store, FakeAPI(), fresh, "", 0, True,
                                     "fine_grained_pat", [], True, 100, read=read)
                 self.assertEqual("source_pending", admitted["stage"])
+                self.assertEqual(prior["generation"] + 1, admitted["generation"])
                 self.assertEqual({
                     "kind": "acknowledged_pending_review",
                     "previous_request_id": prior["request"]["request_id"],

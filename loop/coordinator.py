@@ -43,7 +43,7 @@ def quiescent(api, state, read=None):
             require(type(intent.get("review_id")) is int and intent["review_id"] > 0
                     and intent["review_id"] not in intent["baseline_review_ids"]
                     and intent["request_digest"] == digest(request)
-                    and intent["generation"] == state["generation"]
+                    and intent["generation"] == request["publication"]["generation"]
                     and intent["target"] == [request["repo"], request["pr"]]
                     and intent["acceptance"]["verification_sha256"] == digest(state["report"])
                     and intent["payload"] == payload(request, state["report"]["dispositions"]),
