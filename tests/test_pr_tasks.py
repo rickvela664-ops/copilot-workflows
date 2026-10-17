@@ -858,6 +858,89 @@ class NonCodeEffectsTests(unittest.TestCase):
                 self.assertEqual(1, len(read.reviews))
                 self.assertEqual("PENDING", read.reviews[0]["state"])
 
+    def test_new_phase_preserves_a_stopped_acknowledged_review_and_existing_drafts(self):
+        for deleted in (False, True):
+            state, read, store, name, publisher = self.context("pr_review")
+            with patch("loop.task_effects.confirm_task", side_effect=Rejected("Pending review changed")):
+                with self.assertRaisesRegex(Rejected, "Pending review changed"):
+                    self.publish(state, read, store, name, publisher)
+            prior = store.entries[name]
+            prior.update(stage="blocked", reason="task_effect_uncertain_no_retry",
+                         error="Rejected: Pending review changed")
+            if deleted:
+                read.reviews.clear()
+                read.comments.clear()
+            else:
+                read.comments[0]["body"] = "Human edit"
+            before = copy.deepcopy(prior)
+            reviews, comments = copy.deepcopy(read.reviews), copy.deepcopy(read.comments)
+            fresh = dict(task_request("pr_review"), request_id="e" * 32)
+            with self.subTest(deleted=deleted):
+                _, admitted = start(store, FakeAPI(), fresh, "", 0, True,
+                                    "fine_grained_pat", [], True, 100, read=read)
+                self.assertEqual("source_pending", admitted["stage"])
+                self.assertEqual({
+                    "kind": "acknowledged_pending_review",
+                    "previous_request_id": prior["request"]["request_id"],
+                    "previous_generation": prior["generation"], "authorized_at": 100,
+                    "confirmation": {"kind": "pending_review_receipt", "review_id": 42},
+                }, admitted["restart"])
+                self.assertEqual(before, prior)
+                self.assertEqual("acknowledged", prior["task_intent"]["status"])
+                self.assertNotIn("task_completion", prior)
+                self.assertEqual(reviews, read.reviews)
+                self.assertEqual(comments, read.comments)
+                self.assertEqual(1, len(publisher.posts))
+                if not deleted:
+                    state, _, store, name, _ = self.context("pr_review")
+                    with self.assertRaisesRegex(Rejected, "Existing viewer-owned pending review"):
+                        self.publish(state, read, store, name, publisher)
+                    self.assertEqual(1, len(publisher.posts))
+
+    def test_review_restart_requires_a_bound_receipt_and_no_other_uncertain_effects(self):
+        state, read, store, name, publisher = self.context("pr_review")
+        with patch("loop.task_effects.confirm_task", side_effect=Rejected("Pending review changed")):
+            with self.assertRaises(Rejected):
+                self.publish(state, read, store, name, publisher)
+        prior = store.entries[name]
+        prior.update(stage="blocked", reason="task_effect_uncertain_no_retry")
+        for change in ("lost_response", "missing_id", "baseline_id", "digest", "generation",
+                       "target", "acceptance", "payload", "metadata", "push", "thread", "active"):
+            stopped = copy.deepcopy(prior)
+            intent = stopped["task_intent"]
+            if change == "lost_response":
+                intent.update(status="uncertain")
+            elif change == "missing_id":
+                intent.pop("review_id")
+            elif change == "baseline_id":
+                intent["baseline_review_ids"].append(intent["review_id"])
+            elif change == "digest":
+                intent["request_digest"] = "0" * 64
+            elif change == "generation":
+                intent["generation"] += 1
+            elif change == "target":
+                intent["target"][1] += 1
+            elif change == "acceptance":
+                intent["acceptance"]["verification_sha256"] = "0" * 64
+            elif change == "payload":
+                intent["payload"]["comments"][0]["body"] = "Changed proposal"
+            elif change == "metadata":
+                intent["kind"] = "metadata"
+            elif change == "push":
+                stopped["publication_intent"] = {"status": "uncertain"}
+            elif change == "thread":
+                stopped["effects"] = [{"resolution": {"status": "uncertain"}}]
+            else:
+                stopped["stage"] = "task_effect_intent"
+            store, name = stored(stopped)
+            fresh = dict(task_request("pr_review"), request_id="e" * 32)
+            with self.subTest(change=change), self.assertRaises(Rejected):
+                start(store, FakeAPI(), fresh, "", 0, True, "fine_grained_pat", [], True, 100, read=read)
+            self.assertEqual(stopped, store.entries[name])
+        with patch("loop.coordinator.executions_quiescent", side_effect=Rejected("Previous worker remains active")):
+            with self.assertRaisesRegex(Rejected, "Previous worker remains active"):
+                quiescent(FakeAPI(), prior)
+
     def test_position_fallback_preserves_review_anchor_body_identity_and_diff_guards(self):
         for change in ("body", "path", "position", "modern_line", "modern_side", "range",
                        "commit", "actor", "submitted", "diff"):

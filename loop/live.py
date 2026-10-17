@@ -152,7 +152,8 @@ def start(store, api, request, previous_id, previous_generation, publisher_avail
             confirmation = quiescent(api, prior, read)
             if confirmation is not None:
                 restart = {
-                    "kind": "confirmed_review_request",
+                    "kind": ("acknowledged_pending_review" if confirmation["kind"] == "pending_review_receipt"
+                             else "confirmed_review_request"),
                     "previous_request_id": prior["request"]["request_id"],
                     "previous_generation": prior["generation"],
                     "confirmation": confirmation, "authorized_at": now,

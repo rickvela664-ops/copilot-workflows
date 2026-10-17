@@ -32,8 +32,24 @@ def quiescent(api, state, read=None):
     require(state["reason"] not in {"source_acquisition_uncertain_no_retry",
                                    "duplicate_run_identity"},
             "Uncertain effects require reconciliation, not a new phase")
+    receipt = None
     for key in ("publication_intent", "task_intent"):
         intent = state.get(key)
+        if (key == "task_intent" and intent and intent.get("status") == "acknowledged"
+                and intent.get("kind") == "pending_review"
+                and loop_kind(state["request"]) == "pr_review"):
+            from loop.task_effects import payload
+            request = state["request"]
+            require(type(intent.get("review_id")) is int and intent["review_id"] > 0
+                    and intent["review_id"] not in intent["baseline_review_ids"]
+                    and intent["request_digest"] == digest(request)
+                    and intent["generation"] == state["generation"]
+                    and intent["target"] == [request["repo"], request["pr"]]
+                    and intent["acceptance"]["verification_sha256"] == digest(state["report"])
+                    and intent["payload"] == payload(request, state["report"]["dispositions"]),
+                    "Acknowledged pending review receipt differs from the verified task")
+            receipt = {"kind": "pending_review_receipt", "review_id": intent["review_id"]}
+            continue
         require(not intent or intent.get("status") == "confirmed",
                 "Uncertain effects require reconciliation, not a new phase")
     from loop.effects import pending
@@ -53,7 +69,7 @@ def quiescent(api, state, read=None):
         confirmation = observed_review_request(read, state, review, allow_head_change=True)
         require(confirmation is not None,
                 "Uncertain effects require reconciliation, not a new phase")
-    return confirmation
+    return receipt or confirmation
 
 
 def executions_quiescent(api, state):

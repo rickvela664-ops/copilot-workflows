@@ -37,7 +37,9 @@ Description rechecks the complete diff and original title/body before a title/bo
 
 Pending review confirmation accepts GitHub's line/side fields or maps its position-only draft comments through the same verified PR diff. Positions count from the first hunk and reset per file; they are not source line numbers. Review identity, head, comment bodies and exact changed-line anchors must still match. Lost responses reconcile the existing draft without another review POST.
 
-Unconfirmed task effects have a fifteen-minute reconciliation window. Errors during reconciliation, including a changed PR head or a modified pending draft, do not extend it. An unresolved effect stops as blocked with its original intent and error preserved; it does not retry the mutation, alter a draft or authorize a fresh phase.
+Unconfirmed task effects have a fifteen-minute reconciliation window. Errors during reconciliation, including a changed PR head or a modified pending draft, do not extend it. An unresolved effect stops as blocked with its original intent and error preserved; it does not retry the mutation or alter a draft.
+
+A fresh launch can replace a stopped PR Reviewer task when GitHub acknowledged creating its pending review and the saved review ID, payload and verified result still agree. The previous checkpoint is archived unchanged, and the new phase records the creation receipt without claiming the old comments were confirmed. This permits another review after you edit, submit or delete the draft. All previous executions must have stopped, and any existing viewer-owned pending review remains protected by the new task's publication preflight. Lost creation responses without a saved review ID and other uncertain effects still block a fresh launch.
 
 Description results always contain a complete `proposal` object with `title` and `body`, including `no_change` and `blocked`. A no-change result copies the frozen `metadata` exactly and performs no metadata mutation. A null or missing proposal is rejected.
 
