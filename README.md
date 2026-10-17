@@ -43,6 +43,8 @@ gh workflow run coordinator.yml --repo trask/copilot-workflows --ref main \
 
 Replace `pr_description` with any kind in the table. Only Fix CI waits for target CI or uses it to decide completion. All other tasks finish or continue their review passes independently of CI; the canvas shows live CI separately. Single-pass tasks never claim the review loops' clean-review guarantee. No qualifying fixes/findings means no invented commit/review. An existing viewer-owned pending review is preserved and blocks a second review.
 
+Draft review comments start directly with the finding, without priority or category labels such as `[P2]` or `[General]`.
+
 Checkpoints record PR/head/base identities, CI run/attempt/job metadata and task progress, not source bundles, PR diffs or CI logs. Workers fetch the selected public Git commits directly inside the sandbox. Trusted setup on the worker runner downloads the authoritative GitHub PR diff and selected CI logs to local files. Copilot searches those files and diagnoses relevant failures before proposing fixes. Missing inputs stop explicitly; logs are not truncated or filtered by keywords.
 
 Verification and publication independently fetch the same source and reacquire needed diff/log evidence. Worker results bind the acquired diff hash, and changed CI runs or attempts stop publication. Conflict source acquisition deepens until both selected tips reach the merge base, without a commit-count limit. Conflict workers use applicable instructions and both histories to distinguish current requirements from superseded choices. Unresolved incompatible requirements block instead of choosing a side. Existing pinned phases retain their original input transport.

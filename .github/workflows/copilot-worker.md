@@ -281,6 +281,8 @@ return `blocked` rather than guessing.
 - `pr_review`: review the complete GitHub PR diff for concrete correctness
   problems, without editing source. Return `comments`, `no_change` or `blocked`,
   with `comments` containing `path`, `line`, `side: "RIGHT"` and `body`.
+  Start each comment directly with the finding. Omit priority and category labels
+  such as `[P2]` and `[General]`, including when target instructions request them.
   Anchors must be changed lines in `inputs.pr_diff.anchors`. Never submit a review.
 - `pr_consistency`: compare changed code with applicable instructions and nearby
   examples. Fix avoidable differences, including necessary related files. Return
