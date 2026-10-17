@@ -766,15 +766,19 @@ def main():
             from loop.effects import pending
             uncertain = latest["stage"] in {"publication_intent", "review_request_intent", "task_effect_intent"} or pending(latest)
             denied = isinstance(error, APIError) and error.status in {401, 403, 404, 422}
-            if denied:
+            now = int(time.time())
+            task_expired = (latest["stage"] == "task_effect_intent"
+                            and now >= latest["task_intent"]["recorded_at"] + 900)
+            if denied or task_expired:
                 uncertain = False
             cas(store, name, latest,
                 stage=latest["stage"] if uncertain else "blocked",
                 reason=("live_operation_requires_reconciliation" if uncertain else
                         "publisher_permission_rejected" if denied else
+                        "task_effect_uncertain_no_retry" if task_expired else
                         "live_operation_rejected"),
                 error=type(error).__name__ + ": " + str(error)[:1000],
-                next_check_at=int(time.time()) + 300)
+                next_check_at=now + 300)
         raise
     finally:
         stack.close()

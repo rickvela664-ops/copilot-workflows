@@ -17,7 +17,7 @@ from loop.ci import collect, diagnoses, same_attempts
 from loop.coordinator import cancel, checkpoint, dispatch, quiescent
 from loop.freeze import freeze, probe_target
 from loop.inputs import acquire
-from loop.live import advance, start, watch_ci_fix, watch_single
+from loop.live import advance, main as live_main, start, watch_ci_fix, watch_single
 from loop.policy import (AUTHOR_ID, BOT_IDENTITY_PATH, CENTRAL, LOOP_KINDS, Rejected, candidate_outcome, check_target,
                          canonical, digest, effect_repository, eligible, pipeline_budget)
 from loop.policy import iso, pipeline_limit, staged_source
@@ -138,9 +138,9 @@ class TaskPublisher:
     def pages(self, path, key=None):
         return self.read.pages(path, key)
 
-    def call(self, path, method="GET", data=None):
+    def call(self, path, method="GET", data=None, **kwargs):
         if method == "GET":
-            return self.read.call(path)
+            return self.read.call(path, **kwargs)
         self.posts.append((path, method, data))
         if self.denied:
             raise APIError(403, "permission rejected")
@@ -764,15 +764,59 @@ class NonCodeEffectsTests(unittest.TestCase):
                     evidence(api, state, restored)
 
     def test_lost_responses_reconcile_once_and_never_repeat_POST(self):
-        for kind in ("pr_description", "pr_review"):
+        for kind, now in (("pr_description", 101), ("pr_review", 101),
+                          ("pr_description", 1000), ("pr_review", 1000)):
             state, read, store, name, publisher = self.context(kind)
             publisher.uncertain = True
             with self.assertRaises(APIError):
                 self.publish(state, read, store, name, publisher)
             pending = store.entries[name]
-            complete = confirm_task(store, name, pending, read, 101)
+            complete = confirm_task(store, name, pending, read, now)
             self.assertEqual("complete", complete["stage"])
             self.assertEqual(1, len(publisher.posts))
+
+    def test_reconciliation_errors_stop_at_the_existing_task_effect_deadline(self):
+        for failure in ("head", "pending_review"):
+            state, read, store, name, publisher = self.context("pr_review")
+            publisher.uncertain = True
+            with self.assertRaises(APIError):
+                self.publish(state, read, store, name, publisher)
+            intent = copy.deepcopy(store.entries[name]["task_intent"])
+            if failure == "head":
+                read.pr["head"]["sha"] = "0" * 40
+                message = "Target changed after freeze"
+            else:
+                read.comments[0]["body"] = "Human edit"
+                message = "Pending review changed during reconciliation"
+            reviews, comments = copy.deepcopy(read.reviews), copy.deepcopy(read.comments)
+            environment = {
+                "PR": "1", "TARGET_REPO": FIXTURE, "REQUEST_ID": state["request"]["request_id"],
+                "GENERATION": str(state["generation"]), "EXPECTED_STAGE": "task_effect_intent",
+                "GITHUB_SHA": REVISION, "GITHUB_RUN_ATTEMPT": "1", "GITHUB_RUN_ID": "99",
+            }
+            for now in (999, 1000):
+                with self.subTest(failure=failure, now=now), \
+                        patch.dict(os.environ, environment, clear=True), \
+                        patch("loop.live.API"), patch("loop.live.State", return_value=store), \
+                        patch("loop.live.publisher_for", return_value=publisher), \
+                        patch("loop.live.git", return_value=REVISION.encode()), \
+                        patch("loop.live.time.time", return_value=now), self.assertRaisesRegex(Rejected, message):
+                    live_main()
+                saved = store.entries[name]
+                self.assertEqual("task_effect_intent" if now == 999 else "blocked", saved["stage"])
+                self.assertEqual("live_operation_requires_reconciliation" if now == 999
+                                 else "task_effect_uncertain_no_retry", saved["reason"])
+                self.assertIn(message, saved["error"])
+                self.assertEqual(intent, saved["task_intent"])
+                self.assertEqual(reviews, read.reviews)
+                self.assertEqual(comments, read.comments)
+                self.assertEqual(1, len(publisher.posts))
+            from loop.cli import choose_live
+            with patch("loop.cli.output") as selected:
+                choose_live(store, 1600)
+            selected.assert_not_called()
+            with self.assertRaisesRegex(Rejected, "Uncertain effects require reconciliation"):
+                quiescent(None, store.entries[name])
 
     def test_position_only_pending_reviews_reconcile_after_acknowledged_or_lost_responses(self):
         for direct, lost in ((False, False), (True, False), (True, True)):
