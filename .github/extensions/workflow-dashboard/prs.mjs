@@ -92,8 +92,8 @@ export function taskChoices(pr, viewer) {
 function hasCopilotBodyFeedback(body) {
     if (!body.trim()) return false;
     const summary = body.replace(/\*\*|<\/?strong>/g, "");
-    const counts = [...summary.matchAll(/\bFindings:\s*(None|[0-9]+)\b|\b([0-9]+) open findings?\b/g)]
-        .map((match) => match[1] ?? match[2]);
+    const counts = [...summary.matchAll(/\bFindings:\s*(None|[0-9]+)\b|\b([0-9]+) open findings?\b|\bNo open issues\b/g)]
+        .map((match) => match[1] ?? match[2] ?? "0");
     return counts.length !== 1 || counts.some((count) => count !== "None" && Number(count) > 0) ||
         /Previously missed|Open \([1-9]|New \([1-9]/.test(summary);
 }

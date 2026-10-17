@@ -558,6 +558,31 @@ test("the latest current-head Copilot summary supersedes earlier feedback withou
     assert.equal(taskPresentation(pr, "copilot_review", true).disabled, false);
 });
 
+test("No open issues summaries disable feedback without hiding threads or explicit findings", () => {
+    const body = cleanBody.replace("**0 open findings**", "**No open issues** \u{1f389}");
+    const pr = { ...normalizePull(pull(), repo, state(), account), tasks: ["copilot_review"] };
+    for (const summary of [body, body.replace("**No open issues**", "No open issues"),
+        body.replace("**No open issues**", "<strong>No open issues</strong>")]) {
+        pr.evidence = normalizeEvidence(detail({ reviews: [review({ body: summary })] }), sha);
+        assert.equal(pr.evidence.copilotBodies, 0);
+        assert.equal(actionEvidence(pr, "copilot_review").label, "No Copilot feedback");
+        assert.equal(taskPresentation(pr, "copilot_review", true).disabled, true);
+    }
+    pr.evidence = normalizeEvidence(detail({ reviews: [review({ body })], threads: [thread()] }), sha);
+    assert.equal(actionEvidence(pr, "copilot_review").label, "Open Copilot threads");
+    assert.equal(taskPresentation(pr, "copilot_review", true).disabled, false);
+    for (const feedback of [
+        review({ body: body + "\n**Findings:** 1" }),
+        review({ body: body + "\n**1 open finding**" }),
+        review({ body: body + "\nPreviously missed (1)\nMissing guard" }),
+        review({ body, state: "CHANGES_REQUESTED" }),
+    ]) {
+        pr.evidence = normalizeEvidence(detail({ reviews: [feedback] }), sha);
+        assert.equal(pr.evidence.copilotBodies, 1);
+        assert.equal(taskPresentation(pr, "copilot_review", true).disabled, false);
+    }
+});
+
 test("new feedback in the latest current-head Copilot summary remains actionable", () => {
     const older = review({ submittedAt: "2026-10-11T23:57:11Z" });
     const latest = review({ body: "**1 open finding**", submittedAt: "2026-10-12T03:30:20Z" });
