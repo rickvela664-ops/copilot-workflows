@@ -117,6 +117,7 @@ function controller({ records = [], pulls = [pull()], dashboardState = state(), 
         pullEvidence: async (_selected, prs) => new Map(prs.map((pr) => [pr.number, {
             detail: detail({ number: pr.number, head: pr.sha }),
         }])),
+        pendingReviews: async (_selected, prs) => new Map(prs.map((pr) => [pr.number, { review: null }])),
         recentCoordinators: async () => [],
         completionRuns: async (ids) => new Map(await Promise.all(ids.map(async (id) =>
             [id, (await github.get(`repos/${CENTRAL}/actions/runs/${id}`)).data]))),
@@ -780,6 +781,111 @@ test("CI launch requests detailed evidence after a summary-only refresh", async 
     assert.equal(c.calls.filter((call) => typeof call === "object").length, 0);
 });
 
+test("pending reviews use fresh viewer-filtered GitHub batches, including PRs without a workflow", async () => {
+    const batches = [];
+    let pending = true;
+    const github = new GitHub(async (args) => {
+        const query = args.find((arg) => arg.startsWith("query="));
+        assert.match(query, /reviews\(first: 1, author: "trask", states: \[PENDING\]\)/);
+        assert.doesNotMatch(query, /reviewThreads|mergeRequirements|statusCheckRollup/);
+        const numbers = [...query.matchAll(/pr([0-9]+): pullRequest\(number: [0-9]+\)/g)]
+            .map((match) => Number(match[1]));
+        batches.push(numbers);
+        return response({ data: { repository: Object.fromEntries(numbers.map((number) => [`pr${number}`, {
+            number, reviews: connection(pending && number === 12 ? [{
+                databaseId: 42, state: "PENDING", author: { login: "Trask" }, comments: { totalCount: 2 },
+            }] : []),
+        }])) } });
+    });
+    const pulls = Array.from({ length: 101 }, (_, index) => ({ number: index + 12 }));
+    const first = await github.pendingReviews(repo, pulls, account.login);
+    assert.deepEqual(first.get(12), { review: {
+        url: `https://github.com/${repo}/pull/12#pullrequestreview-42`, commentCount: 2,
+    } });
+    assert.deepEqual(first.get(13), { review: null });
+    pending = false;
+    assert.deepEqual((await github.pendingReviews(repo, pulls, account.login)).get(12), { review: null });
+    assert.deepEqual(batches.map((batch) => batch.length), [100, 1, 100, 1]);
+    assert.equal(github.requests, 4);
+});
+
+test("failed, incomplete or mismatched pending-review reads remain errors, not absent drafts", async () => {
+    const pending = {
+        databaseId: 42, state: "PENDING", author: { login: account.login }, comments: { totalCount: 1 },
+    };
+    for (const value of [
+        null,
+        { number: 13, reviews: connection() },
+        { number: 12, reviews: connection([], true) },
+        { number: 12, reviews: connection([pending, pending]) },
+        ...[
+            { state: "COMMENTED" }, { state: "DISMISSED" }, { author: { login: "someone" } },
+            { databaseId: null }, { comments: { totalCount: -1 } },
+        ].map((change) => ({ number: 12, reviews: connection([{ ...pending, ...change }]) })),
+    ]) {
+        const github = new GitHub(async () => response({ data: { repository: {
+            pr12: value, pr13: { number: 13, reviews: connection() },
+        } } }));
+        const result = await github.pendingReviews(repo, [{ number: 12 }, { number: 13 }], account.login);
+        assert.equal(typeof result.get(12).error, "string");
+        assert.equal(Object.hasOwn(result.get(12), "review"), false);
+        assert.deepEqual(result.get(13), { review: null });
+    }
+    const github = new GitHub(async () => response({ errors: [{ message: "Access denied" }] }));
+    const result = await github.pendingReviews(repo, [{ number: 12 }], account.login);
+    assert.match(result.get(12).error, /could not return/);
+});
+
+test("PR refresh replaces saved pending-review claims with live viewer-owned drafts in every view", async () => {
+    const completed = checkpoint({
+        stage: "complete", task_completion: { outcome: "pending_review", review_id: 42, comments: [] },
+    }, { loop_kind: "pr_review" });
+    const c = controller({
+        records: [completed],
+        pulls: [
+            pull(),
+            pull({ number: 13, user: { id: 9, login: "someone", type: "User" } }),
+            pull({ number: 14, user: { id: 10, login: "renovate[bot]", type: "Bot" } }),
+        ],
+    });
+    const live = { url: `https://github.com/${repo}/pull/13#pullrequestreview-99`, commentCount: 3 };
+    let removed = false;
+    c.github.pendingReviews = async (selected, prs, login) => {
+        assert.equal(selected, repo);
+        assert.equal(login, account.login);
+        assert.deepEqual(prs.map((pr) => pr.number), [12, 13, 14]);
+        return new Map(prs.map((pr) => [pr.number, { review: !removed && pr.number === 13 ? live : null }]));
+    };
+    const first = await c.canvas.refresh();
+    assert.equal(first.prs[0].pendingReview, null);
+    assert.equal(first.prs[0].phase.pendingReviewUrl, `https://github.com/${repo}/pull/12#pullrequestreview-42`);
+    assert.equal(taskPresentation(first.prs[0], "pr_review", true).label, "Review created");
+    assert.deepEqual(first.prs[1].pendingReview, live);
+    assert.equal(first.prs[1].phase, null);
+    assert.equal(taskPresentation(first.prs[1], "pr_review", true).label, "Review ready");
+    removed = true;
+    const next = await c.canvas.refresh();
+    assert.equal(next.prs[1].pendingReview, null);
+    assert.equal(taskPresentation(next.prs[1], "pr_review", true).label, "Run");
+});
+
+test("pending-review read failures hide stale drafts, warn and preserve active task status", async () => {
+    const c = controller();
+    const live = { url: `https://github.com/${repo}/pull/12#pullrequestreview-42`, commentCount: 1 };
+    c.github.pendingReviews = async () => new Map([[12, { review: live }]]);
+    assert.deepEqual((await c.canvas.refresh()).prs[0].pendingReview, live);
+    c.github.pendingReviews = async () => { throw new Error("Review access denied"); };
+    const failed = await c.canvas.refresh();
+    assert.equal(failed.prs[0].pendingReview, null);
+    assert.match(failed.prWarnings.join(" "), /Pending review unavailable. Review access denied/);
+    assert.equal(taskPresentation(failed.prs[0], "pr_review", true).label, "Status unknown");
+    assert.equal(failed.auto, false);
+    assert.equal(failed.prs[0].actionBlock, null);
+    c.setRecords([checkpoint({}, { loop_kind: "pr_review" })]);
+    const active = await c.canvas.refresh();
+    assert.equal(taskPresentation(active.prs[0], "pr_review", true).label, "Running");
+});
+
 test("live evidence uses fresh batches of five PRs including the final partial batch", async () => {
     const batches = [];
     const github = new GitHub(async (args) => {
@@ -1317,7 +1423,10 @@ test("a complete PR refresh reads only PR data and batched live status", async (
         const path = args.at(-1);
         let data;
         if (args[0] === "pr") return { code: 0, stdout: '[{"number":12}]' };
-        if (args.includes("graphql")) data = { data: { repository: { pr12: detail() } } };
+        if (args.includes("graphql")) {
+            const pending = args.find((arg) => arg.startsWith("query=")).includes("states: [PENDING]");
+            data = { data: { repository: { pr12: pending ? { number: 12, reviews: connection() } : detail() } } };
+        }
         else if (path === "user") data = account;
         else if (path === `repos/${repo}/pulls?state=open&per_page=100`) data = [pull()];
         else if (path === dashboardPath(repo)) data = file(state());
@@ -1331,13 +1440,15 @@ test("a complete PR refresh reads only PR data and batched live status", async (
     };
     const result = await canvas.refresh();
     assert.equal(maximum, 4);
-    assert.equal(github.requests, 5);
-    assert.equal(result.cost, 5);
+    assert.equal(github.requests, 6);
+    assert.equal(result.cost, 6);
     assert.equal(result.error, null);
     assert.equal(result.prError, null);
     assert.equal(result.workflowReady, true);
     assert.equal(result.prs.length, 1);
     assert.equal(result.prs[0].actionBlock, null);
+    assert.equal(result.prs[0].pendingReview, null);
+    assert.equal(result.prs[0].pendingReviewError, null);
 });
 
 test("a healthy PR refresh keeps automatic refresh enabled after 20 counted requests", async () => {

@@ -442,9 +442,9 @@ function prCard(pr) {
             : "Request cancellation. Published changes stay; changes already underway may still finish."));
     }
     card.append(tasks);
-    if (pr.phase?.pendingReviewUrl && completionPresentation(pr.phase)) {
+    if (pr.pendingReview && !pr.pendingReviewError && !state.prError) {
         const result = element("div", null, "run-result");
-        result.append(link("Open pending review", pr.phase.pendingReviewUrl));
+        result.append(link("Open pending review", pr.pendingReview.url));
         card.append(result);
     }
     return card;

@@ -266,10 +266,10 @@ export function completionPresentation(phase) {
             label: "No findings", detail: "No new findings. No pending review was created.",
         };
         if (phase.outcome === "pending_review" && phase.pendingReviewUrl) return {
-            label: "Review ready",
+            label: "Review created",
             detail: phase.reviewCommentCount == null
-                ? "A pending GitHub review was created. Only you can see it until you submit it."
-                : `${phase.reviewCommentCount} review comment${phase.reviewCommentCount === 1 ? "" : "s"} in a pending GitHub review. Only you can see it until you submit it.`,
+                ? "A GitHub review was created."
+                : `${phase.reviewCommentCount} review comment${phase.reviewCommentCount === 1 ? " was" : "s were"} added to a GitHub review.`,
         };
     }
     if (phase.outcome === "no_change") return phase.descriptionUpdated
@@ -310,6 +310,17 @@ export function taskPresentation(pr, kind, workflowReady, actions = []) {
         ...result(evidence.label, evidence.tone), actionLabel: evidence.actionLabel,
         detail: pr.actionBlock ?? evidence.detail,
     } : result("Run");
+    if (kind === "pr_review" && !phase?.historical && !phase?.unknownStage &&
+        (!phase || ["clean", "complete", "blocked", "failed", "exhausted", "cancelled"].includes(phase.stage))) {
+        if (pr.pendingReviewError) return {
+            ...result("Status unknown", "unknown"),
+            detail: `Pending review unavailable. ${pr.pendingReviewError}`,
+        };
+        if (pr.pendingReview) return {
+            ...result("Review ready", "complete"),
+            detail: `${pr.pendingReview.commentCount} review comment${pr.pendingReview.commentCount === 1 ? "" : "s"} in your pending GitHub review. Only you can see it until you submit it.`,
+        };
+    }
     if (!phase) return pr.tasks.includes(kind) ? idle() : result(kind === "pr_review" ? "Unavailable" : "Own PRs only");
     if (phase.historical) return result("Historical", "unknown");
     if (phase.unknownStage) return result("Unknown state", "attention");

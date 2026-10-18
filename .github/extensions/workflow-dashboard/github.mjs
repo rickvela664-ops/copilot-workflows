@@ -390,6 +390,57 @@ export class GitHub {
         return results;
     }
 
+    async pendingReviews(repo, pulls, login) {
+        configuredRepository(repo);
+        if (typeof login !== "string" || !login ||
+            pulls.some((pr) => !Number.isSafeInteger(pr.number) || pr.number < 1 || pr.number >= 100000000)) {
+            throw new GitHubError("Invalid viewer or PR identity for pending-review status.");
+        }
+        const results = new Map();
+        const batches = [];
+        for (let index = 0; index < pulls.length; index += 100) batches.push(pulls.slice(index, index + 100));
+        await Promise.all(batches.map(async (batch) => {
+            try {
+                const { repository: data } = await this.graphql(`query($owner: String!, $name: String!) {
+                    repository(owner: $owner, name: $name) {
+                        ${batch.map((pr) => `pr${pr.number}: pullRequest(number: ${pr.number}) {
+                            number
+                            reviews(first: 1, author: ${JSON.stringify(login)}, states: [PENDING]) {
+                                pageInfo { hasNextPage }
+                                nodes { databaseId state author { login } comments { totalCount } }
+                            }
+                        }`).join("\n")}
+                    }
+                }`, repo);
+                for (const pr of batch) {
+                    try {
+                        const detail = data[`pr${pr.number}`];
+                        if (detail?.number !== pr.number) throw new GitHubError("Pending-review status belongs to a different PR.");
+                        const reviews = connection(detail.reviews);
+                        if (reviews.pageInfo.hasNextPage || reviews.nodes.length > 1) {
+                            throw new GitHubError("Pending-review status is incomplete.");
+                        }
+                        const review = reviews.nodes[0];
+                        if (reviews.nodes.length && (!Number.isSafeInteger(review?.databaseId) || review.databaseId < 1 ||
+                            review.state !== "PENDING" || review.author?.login?.toLowerCase() !== login.toLowerCase() ||
+                            !Number.isSafeInteger(review.comments?.totalCount) || review.comments.totalCount < 0)) {
+                            throw new GitHubError("GitHub returned an invalid viewer-owned pending review.");
+                        }
+                        results.set(pr.number, { review: review ? {
+                            url: `https://github.com/${repo}/pull/${pr.number}#pullrequestreview-${review.databaseId}`,
+                            commentCount: review.comments.totalCount,
+                        } : null });
+                    } catch (error) {
+                        results.set(pr.number, { error: error.message });
+                    }
+                }
+            } catch (error) {
+                for (const pr of batch) results.set(pr.number, { error: error.message });
+            }
+        }));
+        return results;
+    }
+
     async pullEvidence(repo, pulls, { summaryCI = false } = {}) {
         configuredRepository(repo);
         if (pulls.some((pr) => !Number.isSafeInteger(pr.number) || pr.number < 1 || pr.number >= 100000000)) {

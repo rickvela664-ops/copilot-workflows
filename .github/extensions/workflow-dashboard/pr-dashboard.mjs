@@ -156,11 +156,17 @@ export class PrDashboard extends Dashboard {
                 this.prs = prs;
                 this.prWarnings = warnings;
             }
-            const [liveStatus] = await Promise.allSettled([
+            const [liveStatus, pendingReviews] = await Promise.allSettled([
                 this.github.pullEvidence(this.repository, prs.filter((pr) => pr.mine || pr.bot), { summaryCI: true }),
+                this.github.pendingReviews(this.repository, prs, account.value.login),
                 workflow,
             ]);
             for (const pr of prs) {
+                const pending = pendingReviews.status === "fulfilled" ? pendingReviews.value.get(pr.number) : null;
+                pr.pendingReview = pending?.review ?? null;
+                pr.pendingReviewError = pending?.error ?? (pendingReviews.status === "rejected"
+                    ? pendingReviews.reason.message : !pending ? "Pending-review status is missing." : null);
+                if (pr.pendingReviewError) warnings.push(`${pr.target}: Pending review unavailable. ${pr.pendingReviewError}`);
                 if (!pr.mine && !pr.bot) continue;
                 const read = liveStatus.status === "fulfilled" ? liveStatus.value.get(pr.number) : null;
                 try {
@@ -178,9 +184,9 @@ export class PrDashboard extends Dashboard {
             this.prWarnings = warnings;
             this.prLoadedAt = this.now();
             this.prError = null;
-            if (prs.some((pr) => pr.evidence?.error)) {
+            if (prs.some((pr) => pr.evidence?.error || pr.pendingReviewError)) {
                 this.auto = false;
-                this.pauseReason = "Live action status is unavailable. Refresh manually.";
+                this.pauseReason = "Live PR status is unavailable. Refresh manually.";
             } else if ([this.github.rate, this.github.graphqlRate].some((rate) =>
                 rate && rate.remaining < rate.limit * 0.1)) {
                 this.auto = false;

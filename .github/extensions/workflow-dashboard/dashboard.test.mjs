@@ -103,7 +103,7 @@ test("PR review results distinguish new comments from existing findings and reta
     assert.equal(phase.reviewCommentCount, 1);
     assert.equal(phase.outcome, "pending_review");
     assert.equal(phase.pendingReviewUrl, "https://github.com/example/project/pull/12#pullrequestreview-42");
-    assert.equal(completionPresentation(phase).label, "Review ready");
+    assert.equal(completionPresentation(phase).label, "Review created");
     const item = targetHistory([record(s)], target).phases[0].iterations[0];
     assert.equal(item.kind, "pr_review");
     assert.deepEqual(item.reviewComments, [{ path: "src/example.js", line: 12, body: "Missing input guard" }]);
@@ -2431,18 +2431,41 @@ test("review cards retain completion tooltips and pending-review links", async (
     });
     state.prs[0].phase = phaseSummary(record(s));
     renderer.render();
+    assert.equal(status()["aria-label"], "Draft review: Review created");
+    assert.equal(result(), undefined);
+    assert.equal(status()["aria-description"], "1 review comment was added to a GitHub review.");
+
+    state.prs[0].pendingReview = {
+        url: "https://github.com/example/project/pull/12#pullrequestreview-99", commentCount: 2,
+    };
+    renderer.render();
     assert.equal(status()["aria-label"], "Draft review: Review ready");
     assert.equal(result().children.length, 1);
     assert.equal(result().firstChild.textContent, "Open pending review");
-    assert.equal(result().firstChild.href, "https://github.com/example/project/pull/12#pullrequestreview-42");
+    assert.equal(result().firstChild.href, "https://github.com/example/project/pull/12#pullrequestreview-99");
     assert.equal(status()["aria-description"],
-        "1 review comment in a pending GitHub review. Only you can see it until you submit it.");
+        "2 review comments in your pending GitHub review. Only you can see it until you submit it.");
 
     state.prs[0].sha = sha("b");
     renderer.render();
-    assert.equal(status()["aria-label"], "Draft review: Previous head");
+    assert.equal(status()["aria-label"], "Draft review: Review ready");
     assert.equal(result().firstChild.textContent, "Open pending review");
-    Object.assign(state.prs[0], { sha: sha("a"), phase: { ...phaseSummary(record(s)), stage: "blocked" } });
+    state.prs[0].phase = null;
+    renderer.render();
+    assert.equal(status()["aria-label"], "Draft review: Review ready");
+    assert.equal(result().firstChild.textContent, "Open pending review");
+    state.prs[0].pendingReview = null;
+    renderer.render();
+    assert.equal(status()["aria-label"], "Draft review: Run");
+    assert.equal(result(), undefined);
+
+    Object.assign(state.prs[0], { pendingReview: { url: "https://github.com/example/project/pull/12", commentCount: 0 },
+        pendingReviewError: "GitHub read failed" });
+    renderer.render();
+    assert.equal(status()["aria-label"], "Draft review: Status unknown");
+    assert.equal(result(), undefined);
+    Object.assign(state.prs[0], { pendingReview: null, pendingReviewError: null,
+        sha: sha("a"), phase: { ...phaseSummary(record(s)), stage: "blocked" } });
     renderer.render();
     assert.equal(status()["aria-label"], "Draft review: Blocked");
     assert.equal(result(), undefined);
