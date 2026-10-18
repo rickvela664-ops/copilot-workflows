@@ -195,8 +195,8 @@ class TaskContractsTests(unittest.TestCase):
             with self.assertRaisesRegex(Rejected, "inputs changed"):
                 semantic(value, changed)
 
-    def test_all_nine_kinds_keep_existing_default_and_exact_new_schemas(self):
-        self.assertEqual(9, len(LOOP_KINDS))
+    def test_all_ten_kinds_keep_existing_default_and_exact_new_schemas(self):
+        self.assertEqual(10, len(LOOP_KINDS))
         for kind in LOOP_KINDS - {"copilot_review", "self_review", "pr_conflict_resolver"}:
             req = task_request(kind)
             value = result(req)
@@ -633,8 +633,10 @@ class NonCodeEffectsTests(unittest.TestCase):
             value["proposal"] = {"title": "New title", "body": "New body"}
         else:
             value["comments"] = [{"path": "Foo.java", "line": 1, "side": "RIGHT",
-                                  "body": "Replace the nested branches with a guard clause."
-                                  if kind == "pr_simplify_review" else "Concrete correctness issue"}]
+                                  "body": {
+                                      "pr_simplify_review": "Replace the nested branches with a guard clause.",
+                                      "pr_consistency_review": "Use the existing guard-clause pattern in Foo.java:1.",
+                                  }.get(kind, "Concrete correctness issue")}]
         state = task_state(req, value)
         read = TaskRead(req)
         store, name = stored(state)
@@ -650,7 +652,8 @@ class NonCodeEffectsTests(unittest.TestCase):
     def test_exact_title_body_PATCH_and_pending_review_without_submission(self):
         for kind, author_id in (("pr_description", AUTHOR_ID),
                                 ("pr_review", 999), ("pr_review", AUTHOR_ID),
-                                ("pr_simplify_review", 999), ("pr_simplify_review", AUTHOR_ID)):
+                                ("pr_simplify_review", 999), ("pr_simplify_review", AUTHOR_ID),
+                                ("pr_consistency_review", 999), ("pr_consistency_review", AUTHOR_ID)):
             state, read, store, name, publisher = self.context(kind, author_id)
             complete = self.publish(state, read, store, name, publisher)
             self.assertEqual("complete", complete["stage"])
@@ -677,40 +680,44 @@ class NonCodeEffectsTests(unittest.TestCase):
             self.assertEqual([], publisher.posts)
             self.assertEqual([{"id": 7, "state": "PENDING", "user": {"id": AUTHOR_ID}}], read.reviews)
 
-    def test_simplification_review_uses_pending_review_publication_without_source_changes(self):
-        state, read, store, name, publisher = self.context("pr_simplify_review")
-        req = state["request"]
-        value = state["report"]["dispositions"]
-        semantic(value, req)
-        with self.assertRaisesRegex(Rejected, "Report-only task contains source changes"):
-            candidate_outcome(value, req, {"changed": True, "commits": [{}],
-                                          "patch_sha256": hashlib.sha256(GOOD_PATCH).hexdigest()})
-        with patch("loop.task_effects.evidence", return_value=(
-                {"verification_sha256": digest(state["report"])}, {})), \
-                patch("loop.task_effects.time.time", return_value=100):
-            complete = advance(store, name, state, Mock(), read, publisher, 100)
-        self.assertEqual("complete", complete["stage"])
-        self.assertEqual("pending_review", complete["task_completion"]["outcome"])
-        self.assertEqual([], complete["publications"])
-        self.assertEqual([(f"repos/{FIXTURE}/pulls/1/reviews", "POST",
-                           {"commit_id": SHA, "comments": value["comments"]})], publisher.posts)
-        actual = PublisherAPI(TEST_TOKEN, req, "fine_grained_pat")
-        self.assertFalse(actual.source_write)
-        actual.bind_effect(complete["task_intent"])
-        actual.authorize(*publisher.posts[0])
-        with self.assertRaisesRegex(Rejected, "without submission"):
-            actual.authorize(publisher.posts[0][0], "POST",
-                             dict(publisher.posts[0][2], event="COMMENT"))
+    def test_review_kinds_use_pending_review_publication_without_source_changes(self):
+        for kind in REVIEW_KINDS:
+            with self.subTest(kind=kind):
+                state, read, store, name, publisher = self.context(kind)
+                req = state["request"]
+                value = state["report"]["dispositions"]
+                semantic(value, req)
+                with self.assertRaisesRegex(Rejected, "Report-only task contains source changes"):
+                    candidate_outcome(value, req, {"changed": True, "commits": [{}],
+                                                  "patch_sha256": hashlib.sha256(GOOD_PATCH).hexdigest()})
+                with patch("loop.task_effects.evidence", return_value=(
+                        {"verification_sha256": digest(state["report"])}, {})), \
+                        patch("loop.task_effects.time.time", return_value=100):
+                    complete = advance(store, name, state, Mock(), read, publisher, 100)
+                self.assertEqual("complete", complete["stage"])
+                self.assertEqual("pending_review", complete["task_completion"]["outcome"])
+                self.assertEqual([], complete["publications"])
+                self.assertEqual([(f"repos/{FIXTURE}/pulls/1/reviews", "POST",
+                                   {"commit_id": SHA, "comments": value["comments"]})], publisher.posts)
+                actual = PublisherAPI(TEST_TOKEN, req, "fine_grained_pat")
+                self.assertFalse(actual.source_write)
+                actual.bind_effect(complete["task_intent"])
+                actual.authorize(*publisher.posts[0])
+                with self.assertRaisesRegex(Rejected, "without submission"):
+                    actual.authorize(publisher.posts[0][0], "POST",
+                                     dict(publisher.posts[0][2], event="COMMENT"))
 
-    def test_simplification_review_retains_acknowledged_receipts_after_cancellation(self):
-        state, read, store, name, publisher = self.context("pr_simplify_review")
-        with patch("loop.task_effects.confirm_task", side_effect=Rejected("Pending review changed")):
-            with self.assertRaises(Rejected):
-                self.publish(state, read, store, name, publisher)
-        pending = store.entries[name]
-        stopped = cancel(store, name, pending["request"]["request_id"], pending["generation"], 101)
-        self.assertEqual({"kind": "pending_review_receipt", "review_id": 42}, quiescent(None, stopped))
-        self.assertEqual(1, len(publisher.posts))
+    def test_review_kinds_retain_acknowledged_receipts_after_cancellation(self):
+        for kind in REVIEW_KINDS:
+            with self.subTest(kind=kind):
+                state, read, store, name, publisher = self.context(kind)
+                with patch("loop.task_effects.confirm_task", side_effect=Rejected("Pending review changed")):
+                    with self.assertRaises(Rejected):
+                        self.publish(state, read, store, name, publisher)
+                pending = store.entries[name]
+                stopped = cancel(store, name, pending["request"]["request_id"], pending["generation"], 101)
+                self.assertEqual({"kind": "pending_review_receipt", "review_id": 42}, quiescent(None, stopped))
+                self.assertEqual(1, len(publisher.posts))
 
     def test_owner_attributed_copilot_pr_can_publish_metadata(self):
         state, read, _, _, publisher = self.context("pr_description")
@@ -808,8 +815,9 @@ class NonCodeEffectsTests(unittest.TestCase):
 
     def test_lost_responses_reconcile_once_and_never_repeat_POST(self):
         for kind, now in (("pr_description", 101), ("pr_review", 101),
-                          ("pr_simplify_review", 101), ("pr_description", 1000),
-                          ("pr_review", 1000), ("pr_simplify_review", 1000)):
+                          ("pr_simplify_review", 101), ("pr_consistency_review", 101),
+                          ("pr_description", 1000), ("pr_review", 1000),
+                          ("pr_simplify_review", 1000), ("pr_consistency_review", 1000)):
             state, read, store, name, publisher = self.context(kind)
             publisher.uncertain = True
             with self.assertRaises(APIError):

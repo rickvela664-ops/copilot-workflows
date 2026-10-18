@@ -27,8 +27,9 @@ REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
 ACCOUNT = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\Z")
 PROFILE = "git-candidate-v1"
 LOOP_KINDS = {"copilot_review", "self_review", "pr_conflict_resolver", "ci_fix",
-              "pr_description", "pr_simplify", "pr_review", "pr_simplify_review", "pr_consistency"}
-REVIEW_KINDS = {"pr_review", "pr_simplify_review"}
+              "pr_description", "pr_simplify", "pr_review", "pr_simplify_review",
+              "pr_consistency", "pr_consistency_review"}
+REVIEW_KINDS = {"pr_review", "pr_simplify_review", "pr_consistency_review"}
 REPORT_KINDS = {"pr_description"} | REVIEW_KINDS
 SINGLE_PASS = LOOP_KINDS - {"copilot_review", "self_review", "ci_fix"}
 

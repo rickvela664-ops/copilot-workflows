@@ -24,7 +24,8 @@ export const TASK_EFFECTS = {
     pr_simplify: "Simplify this PR's code without changing behavior, then push changes. Correct the description if needed.",
     pr_review: "Create a private GitHub review for you to inspect and submit.",
     pr_simplify_review: "Suggest major behavior-preserving code simplifications in a private GitHub review, without editing or pushing code.",
-    pr_consistency: "Match this PR's code to nearby patterns and repository instructions, then push fixes. Correct the description if needed.",
+    pr_consistency: "Fix avoidable inconsistencies with repository conventions without changing behavior, then push fixes. Correct the description if needed.",
+    pr_consistency_review: "Suggest fixes for avoidable inconsistencies with repository conventions in a private GitHub review, without editing or pushing code.",
 };
 
 export function checkedPull(pr, repo) {

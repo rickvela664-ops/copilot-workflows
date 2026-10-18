@@ -15,7 +15,7 @@ on:
       loop_kind:
         description: Independently launched PR task
         type: choice
-        options: [copilot_review, self_review, pr_conflict_resolver, ci_fix, pr_description, pr_simplify, pr_review, pr_simplify_review, pr_consistency]
+        options: [copilot_review, self_review, pr_conflict_resolver, ci_fix, pr_description, pr_simplify, pr_review, pr_simplify_review, pr_consistency, pr_consistency_review]
         default: copilot_review
       previous_request:
         description: Exact observed request identity for cancellation or recovery

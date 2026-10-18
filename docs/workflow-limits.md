@@ -9,7 +9,7 @@ This inventory covers repository-defined limits, including the generated worker 
 | Scope | Limit |
 | --- | --- |
 | Address Copilot feedback, Review and fix, Fix CI | 5 worker passes total, including the first and failed admitted passes |
-| Resolve conflicts, Update title & description, Simplify code, Draft review, Align with existing code | 1 worker pass |
+| Resolve conflicts, Update title & description, Simplify code, Fix inconsistencies, all draft review tasks | 1 worker pass |
 | CI failed-jobs rerun | 1 rerun per upstream Actions run; an existing manual rerun consumes the allowance |
 | Active work | 1 task phase per PR; different PRs can run concurrently |
 | Overall elapsed time, confirmed CI waiting, confirmed review waiting | No deadline |

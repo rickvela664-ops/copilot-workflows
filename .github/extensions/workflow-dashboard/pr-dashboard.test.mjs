@@ -1303,7 +1303,7 @@ test("ownership views are disjoint and compose with reviewer and case-insensitiv
     assert.deepEqual(taskChoices(mine, account), Object.keys(KIND_LABELS));
     assert.deepEqual(taskChoices(other, account), REVIEW_KINDS);
     assert.deepEqual(taskChoices(mine, { ...account, id: 99 }), []);
-    assert.equal(Object.keys(TASK_EFFECTS).length, 9);
+    assert.equal(Object.keys(TASK_EFFECTS).length, 10);
 });
 
 test("My PRs includes GitHub-attributed Copilot PRs with all owner task buttons", async () => {
@@ -1566,7 +1566,7 @@ test("preflight prevents active, historical, duplicate, unknown and wrong-author
     await assert.rejects(denied.canvas.launch({ target, kind: "pr_review", confirmed: true }), /personal owner/);
 });
 
-test("both draft reviews dispatch on the owner's PR and other authors' PRs", async () => {
+test("all draft reviews dispatch on the owner's PR and other authors' PRs", async () => {
     for (const kind of REVIEW_KINDS) {
         for (const user of [pull().user, { login: "someone", id: 99, type: "User" }]) {
             const c = controller({ pulls: [pull({ user })] });

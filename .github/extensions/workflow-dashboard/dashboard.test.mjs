@@ -32,7 +32,7 @@ const fixture = (updates = {}, request = {}) => ({
 const record = (state, name = "pr-v2-123-12.json") => ({ state, name });
 
 test("all independent kinds expose completion without claiming review or CI clearance", () => {
-    assert.equal(Object.keys(KIND_LABELS).length, 9);
+    assert.equal(Object.keys(KIND_LABELS).length, 10);
     for (const kind of Object.keys(KIND_LABELS).filter((value) => !["copilot_review", "self_review"].includes(value))) {
         const s = fixture({
             stage: "complete", task_completion: { outcome: "no_change" },
@@ -2003,7 +2003,7 @@ test("tooltips stay within the viewport and flip above buttons near the bottom",
     assert.match(css.match(/^\.task-button:disabled \{([^}]+)\}/m)?.[1], /pointer-events: none;/);
 });
 
-test("ownership toggle shows both draft reviews for other authors and all tasks for bots", async () => {
+test("ownership toggle shows all draft reviews for other authors and all tasks for bots", async () => {
     const state = rendererState();
     const own = state.prs[0];
     const phase = phaseSummary(record(fixture({}, { loop_kind: "pr_review" })));
@@ -2046,20 +2046,24 @@ test("ownership toggle shows both draft reviews for other authors and all tasks 
     assert.equal(nodes.get("pr-count").textContent, "2 / 4");
     assert.equal(cards().length, 2);
     const active = buttons(cards()[0]);
-    assert.equal(active.length, 3);
+    assert.equal(active.length, 4);
     assert.equal(active[0]["aria-label"], "Draft review: Running");
     assert.equal(active[0]["aria-busy"], "true");
     assert.equal(active[0].disabled, true);
     assert.equal(active[1]["aria-label"], "Draft simplification review: Run");
     assert.equal(active[1].disabled, true);
-    assert.equal(active[2]["aria-label"], "Cancel task");
-    assert.equal(active[2]["aria-busy"], "false");
-    assert.equal(active[2].disabled, false);
-    assert.equal(buttons(cards()[1]).length, 2);
+    assert.equal(active[2]["aria-label"], "Draft consistency review: Run");
+    assert.equal(active[2].disabled, true);
+    assert.equal(active[3]["aria-label"], "Cancel task");
+    assert.equal(active[3]["aria-busy"], "false");
+    assert.equal(active[3].disabled, false);
+    assert.equal(buttons(cards()[1]).length, 3);
     assert.equal(buttons(cards()[1])[0]["aria-label"], "Draft review: Run");
     assert.equal(buttons(cards()[1])[0].disabled, false);
     assert.equal(buttons(cards()[1])[1]["aria-label"], "Draft simplification review: Run");
     assert.equal(buttons(cards()[1])[1].disabled, false);
+    assert.equal(buttons(cards()[1])[2]["aria-label"], "Draft consistency review: Run");
+    assert.equal(buttons(cards()[1])[2].disabled, false);
     assert.ok(cards().every((card) => !buttons(card).some((button) =>
         button["aria-label"]?.startsWith("Review and fix:"))));
 
@@ -2137,7 +2141,7 @@ test("renderer escapes task errors and preserves direct dispatch, disabled contr
     assert.deepEqual(buttons().map((button) => button.firstChild.textContent), [
         "Address Copilot feedback", "Review and fix", "Resolve conflicts", "Fix CI",
         "Update title & description", "Simplify code", "Draft review",
-        "Draft simplification review", "Align with existing code",
+        "Draft simplification review", "Fix inconsistencies", "Draft consistency review",
     ]);
     assert.ok(buttons().every((button) => button.children.length === 1 && button.firstChild.children.length === 0));
     assert.equal(row.children.filter((node) => node.tag === "select").length, 0);
@@ -2479,34 +2483,38 @@ test("review cards retain completion tooltips and pending-review links", async (
 
 
 
-test("simplification review cards distinguish no suggestions and a live pending review", async () => {
-    const state = rendererState();
-    const saved = fixture({
-        stage: "complete", task_completion: { outcome: "no_change" },
-    }, { loop_kind: "pr_simplify_review" });
-    state.prs[0].phase = phaseSummary(record(saved));
-    assert.equal(state.prs[0].phase.maximum, 1);
-    const { renderer, nodes } = await rendererFixture(async () => ({ ok: true, json: async () => state }));
-    const card = () => nodes.get("prs").firstChild;
-    const status = () => taskButtons(card()).find((node) =>
-        node["aria-label"]?.startsWith("Draft simplification review:"));
-    const result = () => card().children.find((node) => node.className === "run-result");
-    assert.equal(status()["aria-label"], "Draft simplification review: No findings");
-    assert.equal(result(), undefined);
-    saved.task_completion = { outcome: "pending_review", review_id: 42,
-        comments: [{ path: "Foo.java", line: 1, side: "RIGHT", body: "Replace nested branches with a guard clause." }] };
-    state.prs[0].phase = phaseSummary(record(saved));
-    renderer.render();
-    assert.equal(status()["aria-label"], "Draft simplification review: Review created");
-    assert.equal(result(), undefined);
-    state.prs[0].pendingReview = {
-        url: "https://github.com/example/project/pull/12#pullrequestreview-42", commentCount: 1,
-    };
-    renderer.render();
-    assert.equal(status()["aria-label"], "Draft simplification review: Review ready");
-    assert.equal(result().firstChild.href, state.prs[0].pendingReview.url);
-    assert.match(tooltipFor(status()).textContent + status()["aria-description"], /pending GitHub review/);
-});
+for (const kind of REVIEW_KINDS) {
+    test(`${KIND_LABELS[kind]} cards distinguish no suggestions and a live pending review`, async () => {
+        const state = rendererState();
+        const saved = fixture({
+            stage: "complete", task_completion: { outcome: "no_change" },
+            report: { candidate: { commit: sha("b") } },
+        }, { loop_kind: kind });
+        state.prs[0].phase = phaseSummary(record(saved));
+        assert.equal(state.prs[0].phase.maximum, 1);
+        assert.equal(targetHistory([record(saved)], target).phases[0].iterations[0].candidateSha, null);
+        const { renderer, nodes } = await rendererFixture(async () => ({ ok: true, json: async () => state }));
+        const card = () => nodes.get("prs").firstChild;
+        const status = () => taskButtons(card()).find((node) =>
+            node["aria-label"]?.startsWith(`${KIND_LABELS[kind]}:`));
+        const result = () => card().children.find((node) => node.className === "run-result");
+        assert.equal(status()["aria-label"], `${KIND_LABELS[kind]}: No findings`);
+        assert.equal(result(), undefined);
+        saved.task_completion = { outcome: "pending_review", review_id: 42,
+            comments: [{ path: "Foo.java", line: 1, side: "RIGHT", body: "Use the existing helper." }] };
+        state.prs[0].phase = phaseSummary(record(saved));
+        renderer.render();
+        assert.equal(status()["aria-label"], `${KIND_LABELS[kind]}: Review created`);
+        assert.equal(result(), undefined);
+        state.prs[0].pendingReview = {
+            url: "https://github.com/example/project/pull/12#pullrequestreview-42", commentCount: 1,
+        };
+        renderer.render();
+        assert.equal(status()["aria-label"], `${KIND_LABELS[kind]}: Review ready`);
+        assert.equal(result().firstChild.href, state.prs[0].pendingReview.url);
+        assert.match(tooltipFor(status()).textContent + status()["aria-description"], /pending GitHub review/);
+    });
+}
 
 test("Cancel dispatches the exact displayed identity directly and stays locked pending confirmation", async () => {
     const state = rendererState();
