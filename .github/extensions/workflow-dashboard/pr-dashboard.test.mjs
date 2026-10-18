@@ -805,8 +805,25 @@ test("pending reviews use fresh viewer-filtered GitHub batches, including PRs wi
     assert.deepEqual(first.get(13), { review: null });
     pending = false;
     assert.deepEqual((await github.pendingReviews(repo, pulls, account.login)).get(12), { review: null });
-    assert.deepEqual(batches.map((batch) => batch.length), [100, 1, 100, 1]);
-    assert.equal(github.requests, 4);
+    assert.deepEqual(batches.map((batch) => batch.length), [25, 25, 25, 25, 1, 25, 25, 25, 25, 1]);
+    assert.equal(github.requests, 10);
+});
+
+test("full pending-review batches keep quoted CLI arguments below the Windows command-line limit", async () => {
+    let maximumLength = 0;
+    const github = new GitHub(async (args) => {
+        maximumLength = Math.max(maximumLength, args.map((arg) => JSON.stringify(arg)).join(" ").length);
+        const query = args.find((arg) => arg.startsWith("query="));
+        const numbers = [...query.matchAll(/pr([0-9]+): pullRequest\(number: [0-9]+\)/g)]
+            .map((match) => Number(match[1]));
+        return response({ data: { repository: Object.fromEntries(numbers.map((number) =>
+            [`pr${number}`, { number, reviews: connection() }])) } });
+    });
+    const pulls = Array.from({ length: 101 }, (_, index) => ({ number: 99999899 + index }));
+    const result = await github.pendingReviews(repo, pulls, "a".repeat(39));
+    assert.equal(result.size, 101);
+    for (const pr of pulls) assert.deepEqual(result.get(pr.number), { review: null });
+    assert.ok(maximumLength < 16000, `Quoted CLI arguments used ${maximumLength} characters.`);
 });
 
 test("failed, incomplete or mismatched pending-review reads remain errors, not absent drafts", async () => {

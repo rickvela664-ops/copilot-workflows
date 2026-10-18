@@ -398,7 +398,8 @@ export class GitHub {
         }
         const results = new Map();
         const batches = [];
-        for (let index = 0; index < pulls.length; index += 100) batches.push(pulls.slice(index, index + 100));
+        // Keep inline GraphQL queries below Windows' command-line limit.
+        for (let index = 0; index < pulls.length; index += 25) batches.push(pulls.slice(index, index + 25));
         await Promise.all(batches.map(async (batch) => {
             try {
                 const { repository: data } = await this.graphql(`query($owner: String!, $name: String!) {
