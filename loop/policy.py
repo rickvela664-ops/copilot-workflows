@@ -27,8 +27,9 @@ REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
 ACCOUNT = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\Z")
 PROFILE = "git-candidate-v1"
 LOOP_KINDS = {"copilot_review", "self_review", "pr_conflict_resolver", "ci_fix",
-              "pr_description", "pr_simplify", "pr_review", "pr_consistency"}
-REPORT_KINDS = {"pr_description", "pr_review"}
+              "pr_description", "pr_simplify", "pr_review", "pr_simplify_review", "pr_consistency"}
+REVIEW_KINDS = {"pr_review", "pr_simplify_review"}
+REPORT_KINDS = {"pr_description"} | REVIEW_KINDS
 SINGLE_PASS = LOOP_KINDS - {"copilot_review", "self_review", "ci_fix"}
 
 
@@ -302,7 +303,7 @@ def eligible(pr, repo=None, actor_id=AUTHOR_ID, kind="copilot_review", owner=Non
     require(kind in LOOP_KINDS and type(actor_id) is int and actor_id > 0
             and pr["user"]["type"] in {"User", "Bot"}
             and type(pr["user"]["id"]) is int and pr["user"]["id"] > 0
-            and (kind == "pr_review" or pr["user"]["type"] == "User"
+            and (kind in REVIEW_KINDS or pr["user"]["type"] == "User"
                  and pr["user"]["id"] == actor_id
                  or pr["user"]["type"] == "Bot" and isinstance(owner, dict)
                  and type(owner.get("id")) is int and owner["id"] == actor_id),
@@ -338,7 +339,7 @@ def eligible(pr, repo=None, actor_id=AUTHOR_ID, kind="copilot_review", owner=Non
             "head_repo": head["repo"]["full_name"], "head_repo_id": head["repo"]["id"],
             "head_ref": ref, "frozen_sha": head["sha"], "source_private": head["repo"]["private"],
             "target_private": base["repo"]["private"], "authorized_actor_id": actor_id}
-    if kind == "pr_review" or owner is not None:
+    if kind in REVIEW_KINDS or owner is not None:
         result["pr_author_id"] = pr["user"]["id"]
     public_request(result)
     return result
@@ -347,7 +348,7 @@ def eligible(pr, repo=None, actor_id=AUTHOR_ID, kind="copilot_review", owner=Non
 def unchanged(request, pr):
     public_request(request)
     kind = loop_kind(request)
-    owner = request.get("commit_author") if kind != "pr_review" and "pr_author_id" in request else None
+    owner = request.get("commit_author") if kind not in REVIEW_KINDS and "pr_author_id" in request else None
     live = eligible(pr, request["repo"], request["authorized_actor_id"], kind, owner)
     require(all(request.get(k) == live[k]
                 for k in live), "Target changed after freeze")
@@ -360,7 +361,7 @@ def check_target(api, request):
     public_request(request)
     pr = api.call(f"repos/{request['repo']}/pulls/{request['pr']}")
     unchanged(request, pr)
-    if loop_kind(request) != "pr_review" and "pr_author_id" in request:
+    if loop_kind(request) not in REVIEW_KINDS and "pr_author_id" in request:
         require(attributed_owner(api, pr, request["repo"], request["authorized_actor_id"],
                                  request["commit_author"]) == request["commit_author"],
                 "GitHub PR ownership changed after freeze")

@@ -3,7 +3,7 @@
 import time
 import uuid
 
-from loop.policy import check_target, digest, loop_kind, require, source_effect
+from loop.policy import REVIEW_KINDS, check_target, digest, loop_kind, require, source_effect
 from loop.publication import evidence
 
 
@@ -11,7 +11,7 @@ def payload(request, result):
     kind = loop_kind(request)
     if kind == "pr_description" or source_effect(request) and "proposal" in result:
         return result["proposal"]
-    if kind == "pr_review":
+    if kind in REVIEW_KINDS:
         return {"commit_id": request["frozen_sha"], "comments": result["comments"]}
     return None
 
@@ -86,7 +86,7 @@ def publish_task(store, name, state, central, read, publisher, now, verified=Non
                    task_completion={"outcome": "no_change", "acceptance": accepted})
     body = payload(request, result)
     intent = {"claim": uuid.uuid4().hex, "kind": "metadata" if metadata else
-              {"pr_review": "pending_review", "ci_fix": "rerun"}[kind],
+              "pending_review" if kind in REVIEW_KINDS else {"ci_fix": "rerun"}[kind],
               "request_digest": digest(request), "generation": state["generation"],
               "target": [request["repo"], request["pr"]], "acceptance": accepted,
               "payload": body, "recorded_at": now, "owner": owner(), "status": "uncertain"}
@@ -95,7 +95,7 @@ def publish_task(store, name, state, central, read, publisher, now, verified=Non
     root = f"repos/{request['repo']}/pulls/{request['pr']}"
     if metadata:
         endpoint, method = root, "PATCH"
-    elif kind == "pr_review":
+    elif kind in REVIEW_KINDS:
         existing = pending_reviews(publisher, request)
         require(not existing, "Existing viewer-owned pending review is preserved")
         intent["baseline_review_ids"] = [r["id"] for r in publisher.pages(root + "/reviews")]
@@ -116,7 +116,7 @@ def publish_task(store, name, state, central, read, publisher, now, verified=Non
         live = check_target(read, dict(request, frozen_sha=state["expected_sha"]))
         require({"title": live["title"], "body": live["body"] or ""} == request["metadata"],
                 "PR metadata changed before PATCH")
-    elif kind == "pr_review":
+    elif kind in REVIEW_KINDS:
         require(not pending_reviews(publisher, request), "Pending review appeared before POST")
     else:
         from loop.ci import same_attempts
@@ -126,7 +126,7 @@ def publish_task(store, name, state, central, read, publisher, now, verified=Non
         response = publisher.call(endpoint, method, body)
     finally:
         publisher.bind_effect(None)
-    if kind == "pr_review":
+    if kind in REVIEW_KINDS:
         require(response["state"] == "PENDING" and response.get("submitted_at") is None,
                 "Review was not created as pending")
         intent["review_id"] = response["id"]

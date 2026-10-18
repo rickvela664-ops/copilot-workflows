@@ -1,6 +1,6 @@
 """Semantic worker results; Git supplies candidate history and commit messages."""
 
-from loop.policy import digest, direct_inputs, exact, loop_kind, require, source_effect
+from loop.policy import REVIEW_KINDS, digest, direct_inputs, exact, loop_kind, require, source_effect
 
 PROTOCOL = "git-candidate-v1"
 TRAILER = "Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>"
@@ -22,9 +22,9 @@ def prose(value, *, summary=False):
 def semantic(value, request):
     current_request(request)
     kind = loop_kind(request)
-    extra = {"copilot_review": {"findings"}, "pr_description": {"proposal"},
-             "pr_review": {"comments"}, "pr_consistency": {"consistency"},
-             "ci_fix": {"diagnoses", "rerun_run"}}.get(kind, set())
+    extra = ({"comments"} if kind in REVIEW_KINDS else
+             {"copilot_review": {"findings"}, "pr_description": {"proposal"},
+              "pr_consistency": {"consistency"}, "ci_fix": {"diagnoses", "rerun_run"}}.get(kind, set()))
     if source_effect(request) and "proposal" in value:
         extra |= {"proposal"}
     exact(value, {"schema", "request_digest", "outcome"}
@@ -43,7 +43,7 @@ def semantic(value, request):
         outcomes |= {"rerun"}
     elif kind == "pr_description":
         outcomes = {"proposal", "no_change", "blocked"}
-    elif kind == "pr_review":
+    elif kind in REVIEW_KINDS:
         outcomes = {"comments", "no_change", "blocked"}
     require(value["outcome"] in outcomes, "Unknown worker outcome")
     if source_effect(request) and "proposal" in value:
@@ -59,7 +59,7 @@ def semantic(value, request):
         require(value["outcome"] == "blocked" or
                 (value["outcome"] == "proposal") == (value["proposal"] != request["metadata"]),
                 "Metadata outcome contradicts proposed text")
-    elif kind == "pr_review":
+    elif kind in REVIEW_KINDS:
         from loop.recommendations import comments
         comments(value["comments"], request)
         require(value["outcome"] == "blocked" or

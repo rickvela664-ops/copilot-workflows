@@ -1,4 +1,4 @@
-import { KIND_LABELS } from "./kinds.mjs";
+import { KIND_LABELS, REVIEW_KINDS } from "./kinds.mjs";
 import { LAUNCH_OWNER_ID } from "./repositories.mjs";
 
 const SHA = /^[0-9a-f]{40}$/;
@@ -23,6 +23,7 @@ export const TASK_EFFECTS = {
     pr_description: "Update the PR title and description if needed.",
     pr_simplify: "Simplify this PR's code without changing behavior, then push changes. Correct the description if needed.",
     pr_review: "Create a private GitHub review for you to inspect and submit.",
+    pr_simplify_review: "Suggest major behavior-preserving code simplifications in a private GitHub review, without editing or pushing code.",
     pr_consistency: "Match this PR's code to nearby patterns and repository instructions, then push fixes. Correct the description if needed.",
 };
 
@@ -86,7 +87,7 @@ export function filterPulls(prs, { ownership = "mine", reviewers = false, search
 
 export function taskChoices(pr, viewer) {
     if (!viewer || viewer.id !== LAUNCH_OWNER_ID) return [];
-    return Object.keys(KIND_LABELS).filter((kind) => kind === "pr_review" || pr.mine || pr.bot);
+    return Object.keys(KIND_LABELS).filter((kind) => REVIEW_KINDS.includes(kind) || pr.mine || pr.bot);
 }
 
 function hasCopilotBodyFeedback(body) {
@@ -261,7 +262,7 @@ export function actionBlock(pr, viewer, phase, ready, dispatch) {
 export function completionPresentation(phase) {
     if (phase.historical || phase.unknownStage || !["complete", "clean"].includes(phase.stage)) return null;
     if (phase.stage === "clean") return { label: "Clean", detail: "Review is clean for the recorded commit. CI is separate." };
-    if (phase.kind === "pr_review") {
+    if (REVIEW_KINDS.includes(phase.kind)) {
         if (phase.outcome === "no_change") return {
             label: "No findings", detail: "No new findings. No pending review was created.",
         };
@@ -310,7 +311,7 @@ export function taskPresentation(pr, kind, workflowReady, actions = []) {
         ...result(evidence.label, evidence.tone), actionLabel: evidence.actionLabel,
         detail: pr.actionBlock ?? evidence.detail,
     } : result("Run");
-    if (kind === "pr_review" && !phase?.historical && !phase?.unknownStage &&
+    if (REVIEW_KINDS.includes(kind) && !phase?.historical && !phase?.unknownStage &&
         (!phase || ["clean", "complete", "blocked", "failed", "exhausted", "cancelled"].includes(phase.stage))) {
         if (pr.pendingReviewError) return {
             ...result("Status unknown", "unknown"),
@@ -321,7 +322,7 @@ export function taskPresentation(pr, kind, workflowReady, actions = []) {
             detail: `${pr.pendingReview.commentCount} review comment${pr.pendingReview.commentCount === 1 ? "" : "s"} in your pending GitHub review. Only you can see it until you submit it.`,
         };
     }
-    if (!phase) return pr.tasks.includes(kind) ? idle() : result(kind === "pr_review" ? "Unavailable" : "Own PRs only");
+    if (!phase) return pr.tasks.includes(kind) ? idle() : result(REVIEW_KINDS.includes(kind) ? "Unavailable" : "Own PRs only");
     if (phase.historical) return result("Historical", "unknown");
     if (phase.unknownStage) return result("Unknown state", "attention");
     if ((kind === "ci_fix" || phase.sha && phase.sha !== pr.sha) &&

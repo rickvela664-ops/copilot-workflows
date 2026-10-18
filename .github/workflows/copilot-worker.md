@@ -284,6 +284,12 @@ return `blocked` rather than guessing.
   Start each comment directly with the finding. Omit priority and category labels
   such as `[P2]` and `[General]`, including when target instructions request them.
   Anchors must be changed lines in `inputs.pr_diff.anchors`. Never submit a review.
+- `pr_simplify_review`: review the complete GitHub PR diff for major
+  behavior-preserving simplifications in changed or directly affected code.
+  Suggest simplifications in review comments without editing source, rather than
+  reviewing correctness or proposing cosmetic or unrelated cleanup.
+  Return `comments`, `no_change` or `blocked`, using the same comment format,
+  changed-line anchors and no-submission rules as `pr_review`.
 - `pr_consistency`: compare changed code with applicable instructions and nearby
   examples. Fix avoidable differences, including necessary related files. Return
   `fixes`, `no_change` or `blocked`, with `consistency` entries containing `path`,

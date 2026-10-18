@@ -13,7 +13,7 @@ from loop.api import API, APIError
 from loop.coordinator import checkpoint, executions_quiescent, quiescent
 from loop.publisher_auth import publisher_secret
 from loop.freeze import freeze
-from loop.policy import (AUTHOR_ID, CENTRAL, DEFAULTS, PROFILE, REQUEST, TERMINAL, Rejected,
+from loop.policy import (AUTHOR_ID, CENTRAL, DEFAULTS, PROFILE, REPORT_KINDS, REQUEST, TERMINAL, Rejected,
                          bot, check_target, checkpoint_name, commit_author, digest, pipeline_budget, pipeline_limit,
                          candidate_outcome, effect_repository, loop_kind, public_request, require, staged_source,
                          supported_checkpoint, timestamp, unchanged)
@@ -379,7 +379,7 @@ def publish(store, name, state, central, read, publisher, now, verified=None):
     pipeline_budget(state)
     require(state["iteration"] > 0, "Publication requires a consumed model pipeline")
     request = state["request"]
-    if loop_kind(request) in {"pr_description", "pr_review"} or (
+    if loop_kind(request) in REPORT_KINDS or (
             loop_kind(request) == "ci_fix" and state["report"]["dispositions"]["outcome"] == "rerun"):
         from loop.task_effects import publish_task
         return publish_task(store, name, state, central, read, publisher, now, verified)

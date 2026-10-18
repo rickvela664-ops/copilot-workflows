@@ -13,7 +13,7 @@ from loop.coordinator import (cancel, checkpoint, dispatch, due, executions_quie
 from loop.control import busy as coordinator_busy, claim as claim_coordinator, owned
 from loop.publisher_auth import publisher_secret
 from loop.freeze import freeze
-from loop.policy import (CENTRAL, LOOP_KINDS, REQUEST, TERMINAL, Rejected, attributed_owner, canonical,
+from loop.policy import (CENTRAL, LOOP_KINDS, REQUEST, REVIEW_KINDS, TERMINAL, Rejected, attributed_owner, canonical,
                          check_target, checkpoint_name, commit_author, digest, effect_repository, eligible, loop_kind, parse_target,
                          staged_source, publication_gate,
                          pipeline_budget, require, supported_checkpoint)
@@ -60,7 +60,7 @@ def select_publisher(api, target, kind="copilot_review"):
     try:
         read = target_api(api, repo)
         live = read.call(f"repos/{repo}/pulls/{number}")
-        owner = attributed_owner(read, live, repo, int(os.environ["GITHUB_ACTOR_ID"])) if kind != "pr_review" else None
+        owner = attributed_owner(read, live, repo, int(os.environ["GITHUB_ACTOR_ID"])) if kind not in REVIEW_KINDS else None
     except APIError as error:
         if error.status not in {401, 403, 404}:
             raise

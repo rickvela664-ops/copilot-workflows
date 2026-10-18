@@ -9,7 +9,7 @@ import { Checkpoints } from "./state.mjs";
 import { REPOSITORIES, DEFAULT_REPOSITORY, LAUNCH_OWNER_ID, dashboardPath, targetParts } from "./repositories.mjs";
 import { actionBlock, actionEvidence, completionPresentation, filterPulls, normalizeEvidence, normalizePull, taskChoices, taskPresentation, TASK_EFFECTS } from "./prs.mjs";
 import { startServer } from "./server.mjs";
-import { KIND_LABELS } from "./kinds.mjs";
+import { KIND_LABELS, REVIEW_KINDS } from "./kinds.mjs";
 
 const repo = DEFAULT_REPOSITORY;
 const target = `${repo}#12`;
@@ -1301,9 +1301,9 @@ test("ownership views are disjoint and compose with reviewer and case-insensitiv
     assert.deepEqual(filterPulls([mine, other], { ownership: "others", reviewers: true, search: "SOMEONE" }), [other]);
     assert.deepEqual(filterPulls([mine, other], { ownership: "others", search: "trask" }), []);
     assert.deepEqual(taskChoices(mine, account), Object.keys(KIND_LABELS));
-    assert.deepEqual(taskChoices(other, account), ["pr_review"]);
+    assert.deepEqual(taskChoices(other, account), REVIEW_KINDS);
     assert.deepEqual(taskChoices(mine, { ...account, id: 99 }), []);
-    assert.equal(Object.keys(TASK_EFFECTS).length, 8);
+    assert.equal(Object.keys(TASK_EFFECTS).length, 9);
 });
 
 test("My PRs includes GitHub-attributed Copilot PRs with all owner task buttons", async () => {
@@ -1331,7 +1331,7 @@ test("My PRs includes GitHub-attributed Copilot PRs with all owner task buttons"
     assert.deepEqual(evidenceNumbers, [12, 13, 15]);
     assert.deepEqual(result.prs[0].tasks, Object.keys(KIND_LABELS));
     assert.deepEqual(result.prs[1].tasks, Object.keys(KIND_LABELS));
-    assert.deepEqual(result.prs[2].tasks, ["pr_review"]);
+    assert.deepEqual(result.prs[2].tasks, REVIEW_KINDS);
     assert.deepEqual(result.prs[3].tasks, Object.keys(KIND_LABELS));
     c.github.ownPullNumbers = async () => new Set();
     await assert.rejects(c.canvas.launch({ target: `${repo}#13`, kind: "pr_description", confirmed: true }), /not eligible/);
@@ -1566,19 +1566,23 @@ test("preflight prevents active, historical, duplicate, unknown and wrong-author
     await assert.rejects(denied.canvas.launch({ target, kind: "pr_review", confirmed: true }), /personal owner/);
 });
 
-test("PR Reviewer is enabled on the owner's PR and dispatches a review task", async () => {
-    const c = controller();
-    const state = await c.canvas.refresh();
-    const presentation = taskPresentation(state.prs[0], "pr_review", state.workflowReady);
-    assert.equal(presentation.label, "Run");
-    assert.equal(presentation.disabled, false);
-    await c.canvas.launch({ target, kind: "pr_review", confirmed: true });
-    assert.deepEqual(c.calls.filter((call) => typeof call === "object"), [{
-        operation: "launch", target, loop_kind: "pr_review", publication_auth: "fine_grained_pat",
-    }]);
+test("both draft reviews dispatch on the owner's PR and other authors' PRs", async () => {
+    for (const kind of REVIEW_KINDS) {
+        for (const user of [pull().user, { login: "someone", id: 99, type: "User" }]) {
+            const c = controller({ pulls: [pull({ user })] });
+            const state = await c.canvas.refresh();
+            const presentation = taskPresentation(state.prs[0], kind, state.workflowReady);
+            assert.equal(presentation.label, "Run");
+            assert.equal(presentation.disabled, false);
+            await c.canvas.launch({ target, kind, confirmed: true });
+            assert.deepEqual(c.calls.filter((call) => typeof call === "object"), [{
+                operation: "launch", target, loop_kind: kind, publication_auth: "fine_grained_pat",
+            }]);
+        }
+    }
 });
 
-test("bot PRs offer all eight tasks and launch them with live evidence", async () => {
+test("bot PRs offer every task and launch them with live evidence", async () => {
     for (const kind of Object.keys(KIND_LABELS)) {
         const c = controller({ pulls: [pull({ user: { login: "dependabot[bot]", id: 21, type: "Bot" } })] });
         c.github.pullEvidence = async () => new Map([[12, {

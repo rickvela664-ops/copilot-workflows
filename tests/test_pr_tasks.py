@@ -18,7 +18,7 @@ from loop.coordinator import cancel, checkpoint, dispatch, quiescent
 from loop.freeze import freeze, probe_target
 from loop.inputs import acquire
 from loop.live import advance, main as live_main, start, watch_ci_fix, watch_single
-from loop.policy import (AUTHOR_ID, BOT_IDENTITY_PATH, CENTRAL, LOOP_KINDS, Rejected, candidate_outcome, check_target,
+from loop.policy import (AUTHOR_ID, BOT_IDENTITY_PATH, CENTRAL, LOOP_KINDS, REVIEW_KINDS, Rejected, candidate_outcome, check_target,
                          canonical, digest, effect_repository, eligible, pipeline_budget)
 from loop.policy import iso, pipeline_limit, staged_source
 from loop.publication import PublisherAPI, acceptance, authenticated_push, evidence, import_candidate
@@ -44,7 +44,7 @@ def task_request(kind):
     if kind == "pr_description":
         req["pr_diff"] = description_diff(GOOD_PATCH.decode())
         req["metadata"] = {"title": "Original", "body": "Original body"}
-    if kind == "pr_review":
+    if kind in REVIEW_KINDS:
         req["pr_author_id"] = 999
     if kind == "ci_fix":
         req["ci_evidence"] = {"sha": req["frozen_sha"], "decision": "failed",
@@ -62,7 +62,7 @@ def result(req, outcome="no_change", patch_bytes=b""):
     kind = req["loop_kind"]
     if kind == "pr_description":
         value["proposal"] = dict(req["metadata"])
-    elif kind == "pr_review":
+    elif kind in REVIEW_KINDS:
         value["comments"] = []
     elif kind == "pr_consistency":
         value["consistency"] = [{"path": "Foo.java", "classification": "avoidable",
@@ -80,7 +80,7 @@ class TaskRead(SelfRead):
         super().__init__(req)
         self.pr.update(title="Original", body="Original body", changed_files=1)
         self.diff = req["pr_diff"]["text"]
-        if req["loop_kind"] == "pr_review":
+        if req["loop_kind"] in REVIEW_KINDS:
             self.pr["user"]["id"] = req["pr_author_id"]
         self.reviews = []
         self.comments = []
@@ -195,8 +195,8 @@ class TaskContractsTests(unittest.TestCase):
             with self.assertRaisesRegex(Rejected, "inputs changed"):
                 semantic(value, changed)
 
-    def test_all_eight_kinds_keep_existing_default_and_exact_new_schemas(self):
-        self.assertEqual(8, len(LOOP_KINDS))
+    def test_all_nine_kinds_keep_existing_default_and_exact_new_schemas(self):
+        self.assertEqual(9, len(LOOP_KINDS))
         for kind in LOOP_KINDS - {"copilot_review", "self_review", "pr_conflict_resolver"}:
             req = task_request(kind)
             value = result(req)
@@ -215,13 +215,14 @@ class TaskContractsTests(unittest.TestCase):
     def test_reviewer_exception_does_not_authorize_source_or_metadata_on_other_authors(self):
         pr = personal_pr()
         pr["user"]["id"] = 999
-        self.assertEqual(999, eligible(pr, FIXTURE, AUTHOR_ID, "pr_review")["pr_author_id"])
-        self.assertEqual(AUTHOR_ID, eligible(
-            personal_pr(), FIXTURE, AUTHOR_ID, "pr_review")["pr_author_id"])
-        for kind in LOOP_KINDS - {"pr_review"}:
+        for kind in REVIEW_KINDS:
+            self.assertEqual(999, eligible(pr, FIXTURE, AUTHOR_ID, kind)["pr_author_id"])
+            self.assertEqual(AUTHOR_ID, eligible(
+                personal_pr(), FIXTURE, AUTHOR_ID, kind)["pr_author_id"])
+        for kind in LOOP_KINDS - REVIEW_KINDS:
             with self.subTest(kind=kind), self.assertRaises(Rejected):
                 eligible(pr, FIXTURE, AUTHOR_ID, kind)
-        for kind in ("pr_description", "pr_review"):
+        for kind in ("pr_description", *REVIEW_KINDS):
             req = task_request(kind)
             req["head_repo"] = "fork/head"
             self.assertEqual(FIXTURE, effect_repository(req))
@@ -229,20 +230,21 @@ class TaskContractsTests(unittest.TestCase):
                 authenticated_push(".", req, "f" * 40, TEST_TOKEN)
 
     def test_reviewer_freezes_own_pr_and_rechecks_author_identity(self):
-        req = task_request("pr_review")
-        req["pr_author_id"] = AUTHOR_ID
-        read = TaskRead(req)
-        frozen = freeze(read, 1, REVISION, 100, FIXTURE, loop_kind="pr_review")
-        self.assertEqual(AUTHOR_ID, frozen["pr_author_id"])
-        self.assertEqual(AUTHOR_ID, frozen["commit_author"]["id"])
-        self.assertEqual(req["pr_diff"], collect_diff(read, frozen))
-        self.assertEqual("ready", start(
-            MemoryState(), FakeAPI(), frozen, "", 0, True,
-            "fine_grained_pat", [], True, 100)[1]["stage"])
-        check_target(read, frozen)
-        read.pr["user"]["id"] = 999
-        with self.assertRaisesRegex(Rejected, "Target changed after freeze"):
+        for kind in REVIEW_KINDS:
+            req = task_request(kind)
+            req["pr_author_id"] = AUTHOR_ID
+            read = TaskRead(req)
+            frozen = freeze(read, 1, REVISION, 100, FIXTURE, loop_kind=kind)
+            self.assertEqual(AUTHOR_ID, frozen["pr_author_id"])
+            self.assertEqual(AUTHOR_ID, frozen["commit_author"]["id"])
+            self.assertEqual(req["pr_diff"], collect_diff(read, frozen))
+            self.assertEqual("ready", start(
+                MemoryState(), FakeAPI(), frozen, "", 0, True,
+                "fine_grained_pat", [], True, 100)[1]["stage"])
             check_target(read, frozen)
+            read.pr["user"]["id"] = 999
+            with self.subTest(kind=kind), self.assertRaisesRegex(Rejected, "Target changed after freeze"):
+                check_target(read, frozen)
 
     def test_reviewer_freezes_bot_authors_and_rechecks_identity(self):
         req = task_request("pr_review")
@@ -283,7 +285,7 @@ class TaskContractsTests(unittest.TestCase):
                 with self.assertRaisesRegex(Rejected, "Target changed after freeze"):
                     check_target(read, frozen)
                 read.pr["user"].update(id=999, type="User")
-                if kind != "pr_review":
+                if kind not in REVIEW_KINDS:
                     with self.assertRaisesRegex(Rejected, "Wrong author"):
                         check_target(read, frozen)
 
@@ -320,7 +322,7 @@ class TaskContractsTests(unittest.TestCase):
                     freeze(read, 1, REVISION, 100, FIXTURE, loop_kind=kind)
 
     def test_new_tasks_bind_live_base_and_acquire_complete_diff_on_the_runner(self):
-        for kind in ("pr_review", "pr_description", "pr_simplify", "pr_consistency", "pr_conflict_resolver"):
+        for kind in (*REVIEW_KINDS, "pr_description", "pr_simplify", "pr_consistency", "pr_conflict_resolver"):
             req = task_request(kind)
             read = TaskRead(req)
             frozen = freeze(read, 1, REVISION, 100, FIXTURE, loop_kind=kind)
@@ -528,7 +530,7 @@ class TaskContractsTests(unittest.TestCase):
 
     def test_single_pass_checkpoints_cannot_admit_a_second_worker(self):
         from loop.coordinator import dispatch
-        for kind in ("pr_simplify", "pr_consistency", "pr_description", "pr_review"):
+        for kind in ("pr_simplify", "pr_consistency", "pr_description", *REVIEW_KINDS):
             req = task_request(kind)
             state = checkpoint(req)
             state.update(stage="ready", iteration=1, source={"durably": "bound"}, publications=[])
@@ -607,11 +609,12 @@ class SourceDescriptionTests(unittest.TestCase):
         with patch("loop.live.time.time", return_value=100), self.assertRaisesRegex(Rejected, "metadata changed"):
             advance(store, name, state, Mock(), read, publisher, 100)
         self.assertEqual([], publisher.posts)
-        req = task_request("pr_review")
-        value = result(req)
-        value["proposal"] = state["report"]["dispositions"]["proposal"]
-        with self.assertRaises(Rejected):
-            semantic(value, req)
+        for kind in REVIEW_KINDS:
+            req = task_request(kind)
+            value = result(req)
+            value["proposal"] = state["report"]["dispositions"]["proposal"]
+            with self.subTest(kind=kind), self.assertRaises(Rejected):
+                semantic(value, req)
         req = task_request("ci_fix")
         req["metadata"] = state["request"]["metadata"]
         value = result(req, "rerun")
@@ -623,13 +626,15 @@ class SourceDescriptionTests(unittest.TestCase):
 class NonCodeEffectsTests(unittest.TestCase):
     def context(self, kind, author_id=999):
         req = task_request(kind)
-        if kind == "pr_review":
+        if kind in REVIEW_KINDS:
             req["pr_author_id"] = author_id
         value = result(req, "proposal" if kind == "pr_description" else "comments")
         if kind == "pr_description":
             value["proposal"] = {"title": "New title", "body": "New body"}
         else:
-            value["comments"] = [{"path": "Foo.java", "line": 1, "side": "RIGHT", "body": "Concrete correctness issue"}]
+            value["comments"] = [{"path": "Foo.java", "line": 1, "side": "RIGHT",
+                                  "body": "Replace the nested branches with a guard clause."
+                                  if kind == "pr_simplify_review" else "Concrete correctness issue"}]
         state = task_state(req, value)
         read = TaskRead(req)
         store, name = stored(state)
@@ -644,7 +649,8 @@ class NonCodeEffectsTests(unittest.TestCase):
 
     def test_exact_title_body_PATCH_and_pending_review_without_submission(self):
         for kind, author_id in (("pr_description", AUTHOR_ID),
-                                ("pr_review", 999), ("pr_review", AUTHOR_ID)):
+                                ("pr_review", 999), ("pr_review", AUTHOR_ID),
+                                ("pr_simplify_review", 999), ("pr_simplify_review", AUTHOR_ID)):
             state, read, store, name, publisher = self.context(kind, author_id)
             complete = self.publish(state, read, store, name, publisher)
             self.assertEqual("complete", complete["stage"])
@@ -662,12 +668,49 @@ class NonCodeEffectsTests(unittest.TestCase):
             self.assertFalse(complete["publications"])
 
     def test_existing_own_pr_pending_review_is_preserved(self):
-        state, read, store, name, publisher = self.context("pr_review", AUTHOR_ID)
-        read.reviews = [{"id": 7, "state": "PENDING", "user": {"id": AUTHOR_ID}}]
-        with self.assertRaisesRegex(Rejected, "Existing viewer-owned pending review is preserved"):
-            self.publish(state, read, store, name, publisher)
-        self.assertEqual([], publisher.posts)
-        self.assertEqual([{"id": 7, "state": "PENDING", "user": {"id": AUTHOR_ID}}], read.reviews)
+        for kind in REVIEW_KINDS:
+            state, read, store, name, publisher = self.context(kind, AUTHOR_ID)
+            read.reviews = [{"id": 7, "state": "PENDING", "user": {"id": AUTHOR_ID}}]
+            with self.subTest(kind=kind), self.assertRaisesRegex(
+                    Rejected, "Existing viewer-owned pending review is preserved"):
+                self.publish(state, read, store, name, publisher)
+            self.assertEqual([], publisher.posts)
+            self.assertEqual([{"id": 7, "state": "PENDING", "user": {"id": AUTHOR_ID}}], read.reviews)
+
+    def test_simplification_review_uses_pending_review_publication_without_source_changes(self):
+        state, read, store, name, publisher = self.context("pr_simplify_review")
+        req = state["request"]
+        value = state["report"]["dispositions"]
+        semantic(value, req)
+        with self.assertRaisesRegex(Rejected, "Report-only task contains source changes"):
+            candidate_outcome(value, req, {"changed": True, "commits": [{}],
+                                          "patch_sha256": hashlib.sha256(GOOD_PATCH).hexdigest()})
+        with patch("loop.task_effects.evidence", return_value=(
+                {"verification_sha256": digest(state["report"])}, {})), \
+                patch("loop.task_effects.time.time", return_value=100):
+            complete = advance(store, name, state, Mock(), read, publisher, 100)
+        self.assertEqual("complete", complete["stage"])
+        self.assertEqual("pending_review", complete["task_completion"]["outcome"])
+        self.assertEqual([], complete["publications"])
+        self.assertEqual([(f"repos/{FIXTURE}/pulls/1/reviews", "POST",
+                           {"commit_id": SHA, "comments": value["comments"]})], publisher.posts)
+        actual = PublisherAPI(TEST_TOKEN, req, "fine_grained_pat")
+        self.assertFalse(actual.source_write)
+        actual.bind_effect(complete["task_intent"])
+        actual.authorize(*publisher.posts[0])
+        with self.assertRaisesRegex(Rejected, "without submission"):
+            actual.authorize(publisher.posts[0][0], "POST",
+                             dict(publisher.posts[0][2], event="COMMENT"))
+
+    def test_simplification_review_retains_acknowledged_receipts_after_cancellation(self):
+        state, read, store, name, publisher = self.context("pr_simplify_review")
+        with patch("loop.task_effects.confirm_task", side_effect=Rejected("Pending review changed")):
+            with self.assertRaises(Rejected):
+                self.publish(state, read, store, name, publisher)
+        pending = store.entries[name]
+        stopped = cancel(store, name, pending["request"]["request_id"], pending["generation"], 101)
+        self.assertEqual({"kind": "pending_review_receipt", "review_id": 42}, quiescent(None, stopped))
+        self.assertEqual(1, len(publisher.posts))
 
     def test_owner_attributed_copilot_pr_can_publish_metadata(self):
         state, read, _, _, publisher = self.context("pr_description")
@@ -765,7 +808,8 @@ class NonCodeEffectsTests(unittest.TestCase):
 
     def test_lost_responses_reconcile_once_and_never_repeat_POST(self):
         for kind, now in (("pr_description", 101), ("pr_review", 101),
-                          ("pr_description", 1000), ("pr_review", 1000)):
+                          ("pr_simplify_review", 101), ("pr_description", 1000),
+                          ("pr_review", 1000), ("pr_simplify_review", 1000)):
             state, read, store, name, publisher = self.context(kind)
             publisher.uncertain = True
             with self.assertRaises(APIError):
@@ -998,7 +1042,7 @@ class NonCodeEffectsTests(unittest.TestCase):
         self.assertEqual(1, len(publisher.posts))
 
     def test_report_publisher_cannot_push_submit_approve_or_mutate_unbound_fields(self):
-        for kind in ("pr_description", "pr_review"):
+        for kind in ("pr_description", *REVIEW_KINDS):
             req = task_request(kind)
             publisher = PublisherAPI(TEST_TOKEN, req, "fine_grained_pat")
             with self.assertRaises(ValueError):
@@ -1009,7 +1053,7 @@ class NonCodeEffectsTests(unittest.TestCase):
                 publisher.authorize(f"repos/{FIXTURE}/issues/1/comments", "POST", {"body": "bad"})
 
     def test_report_identity_does_not_require_head_push_permission(self):
-        for kind in ("pr_description", "pr_review"):
+        for kind in ("pr_description", *REVIEW_KINDS):
             req = task_request(kind)
             req.update(head_repo="fork/head", head_repo_id=123)
             read = TaskRead(req)
@@ -1061,7 +1105,7 @@ class NonCodeEffectsTests(unittest.TestCase):
         self.assertEqual([], publisher.posts)
 
     def test_no_findings_or_matching_description_makes_no_mutation(self):
-        for kind in ("pr_description", "pr_review"):
+        for kind in ("pr_description", *REVIEW_KINDS):
             state, read, store, name, publisher = self.context(kind)
             state["report"]["dispositions"] = result(state["request"])
             store.entries[name] = copy.deepcopy(state)
@@ -1387,7 +1431,7 @@ class MergeGitTests(unittest.TestCase):
             self.assertEqual(b"incoming\n", git(["show", "incoming:Incoming.txt"], imported))
 
     def test_ordinary_fixes_and_report_results_bind_full_source_scope(self):
-        for kind in ("pr_simplify", "pr_consistency", "pr_review"):
+        for kind in ("pr_simplify", "pr_consistency", *REVIEW_KINDS):
             with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
                 merge_req = self.context(directory)
                 req = task_request(kind)

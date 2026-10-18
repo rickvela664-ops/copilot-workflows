@@ -1,4 +1,4 @@
-import { KIND_LABELS } from "./kinds.mjs";
+import { KIND_LABELS, REVIEW_KINDS } from "./kinds.mjs";
 import { filterPulls, taskPresentation, completionPresentation, TASK_EFFECTS } from "./prs.mjs";
 
 const $ = (id) => document.getElementById(id);
@@ -398,7 +398,7 @@ function prCard(pr) {
     tasks.setAttribute("role", "group");
     tasks.setAttribute("aria-label", `Workflow tasks for ${pr.target}`);
     for (const [kind, label] of Object.entries(KIND_LABELS)) {
-        if (!pr.mine && !pr.bot && kind !== "pr_review") continue;
+        if (!pr.mine && !pr.bot && !REVIEW_KINDS.includes(kind)) continue;
         const presentation = taskPresentation(pr, kind, state.workflowReady, state.actions);
         const actionLabel = presentation.actionLabel ?? label;
         const button = element("button", null, "task-button");

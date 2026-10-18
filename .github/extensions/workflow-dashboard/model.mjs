@@ -164,7 +164,7 @@ export function phaseSummary(record) {
             ? `https://github.com/${r.repo}/pull/${r.pr}#pullrequestreview-${s.task_completion.review_id}` : null,
         reason: s.reason ?? null, error: s.error ?? null,
         iteration: s.iteration, maximum: ["pr_conflict_resolver", "pr_description", "pr_simplify",
-            "pr_review", "pr_consistency"].includes(r.loop_kind) ? 1 : r.budgets?.max_iterations ?? null,
+            "pr_review", "pr_simplify_review", "pr_consistency"].includes(r.loop_kind) ? 1 : r.budgets?.max_iterations ?? null,
         started: time(r.publication?.authorized_at ?? r.frozen_at),
         cancelled: time(s.cancelled_at),
         deadline: time(r.deadline), nextCheck: time(s.next_check_at),
@@ -202,7 +202,7 @@ function iteration(record, publication) {
         historical: historical(s), outcome: s.report?.dispositions?.outcome ?? null,
         verification: historical(s) ? "historical evidence" : s.report?.verification ?? "not recorded",
         changedPaths: Array.isArray(candidate?.changed_paths) ? candidate.changed_paths : [],
-        candidateSha: ["pr_description", "pr_review"].includes(r.loop_kind) ||
+        candidateSha: ["pr_description", "pr_review", "pr_simplify_review"].includes(r.loop_kind) ||
             candidate?.changed === false ? null : candidate?.commit ?? null,
         publication: publication ? {
             sha: publication.sha, effect: publication.effect, confirmed: time(publication.confirmed_at),

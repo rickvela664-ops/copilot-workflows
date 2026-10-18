@@ -8,7 +8,7 @@ from pathlib import Path
 from loop.policy import direct_inputs
 
 from loop.api import API
-from loop.policy import (BOT_IDENTITY_PATH, CENTRAL, PROFILE, SHA, digest,
+from loop.policy import (BOT_IDENTITY_PATH, CENTRAL, PROFILE, REVIEW_KINDS, SHA, digest,
                          candidate_outcome, check_target, commit_author, loop_kind, pipeline_limit, require, source_effect, staged_source,
                          unchanged)
 from loop.verify import (artifact_metadata, git as object_git, safe_path, verify)
@@ -57,7 +57,8 @@ class PublisherAPI(API):
     def bind_effect(self, intent):
         if intent is not None:
             expected = ("metadata" if source_effect(self.request) and intent["kind"] == "metadata"
-                        else {"pr_description": "metadata", "pr_review": "pending_review",
+                        else "pending_review" if self.loop_kind in REVIEW_KINDS
+                        else {"pr_description": "metadata",
                               "ci_fix": "rerun"}.get(self.loop_kind))
             if expected is not None:
                 require(intent["kind"] == expected and intent["request_digest"] == digest(self.request)
@@ -101,7 +102,7 @@ class PublisherAPI(API):
         if self.effect and self.effect["kind"] == "metadata":
             require(method == "PATCH" and path == root and data == self.effect["payload"]
                     and set(data) == {"title", "body"}, "Unbound metadata mutation")
-        elif self.effect and self.loop_kind == "pr_review":
+        elif self.effect and self.loop_kind in REVIEW_KINDS:
             require(method == "POST" and path == root + "/reviews" and data == self.effect["payload"]
                     and set(data) == {"commit_id", "comments"}
                     and data["commit_id"] == self.request["frozen_sha"],

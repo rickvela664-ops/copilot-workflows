@@ -3,7 +3,7 @@
 import time
 import uuid
 
-from loop.policy import (AUTHOR_ID, BOT_IDENTITY_PATH, BOT_NODE, DEFAULTS, LOOP_KINDS, SHA, attributed_owner, bot, check_target, commit_author, diff_scope, eligible,
+from loop.policy import (AUTHOR_ID, BOT_IDENTITY_PATH, BOT_NODE, DEFAULTS, LOOP_KINDS, REVIEW_KINDS, SHA, attributed_owner, bot, check_target, commit_author, diff_scope, eligible,
                          iso, require, safe_ref, source_effect, unchanged)
 
 THREADS = """
@@ -102,9 +102,9 @@ def probe_target(api, number, revision, now=None, repo=None, actor_id=AUTHOR_ID,
         require(bot(identity) and identity["node_id"] == BOT_NODE, "Copilot identity changed")
     path = f"repos/{repo}/pulls/{number}"
     pr = api.call(path)
-    owner = attributed_owner(api, pr, repo, actor_id) if loop_kind != "pr_review" else None
+    owner = attributed_owner(api, pr, repo, actor_id) if loop_kind not in REVIEW_KINDS else None
     target = eligible(pr, repo, actor_id, loop_kind, owner)
-    author = owner or (api.call(f"user/{actor_id}") if loop_kind == "pr_review" else pr["user"])
+    author = owner or (api.call(f"user/{actor_id}") if loop_kind in REVIEW_KINDS else pr["user"])
     target["commit_author"] = {"id": author["id"], "login": author.get("login")}
     commit_author(target)
     if diff_scope(dict(loop_kind=loop_kind)):

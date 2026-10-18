@@ -6,7 +6,7 @@ import uuid
 from loop.api import APIError
 from loop.revisions import check_pin, workflow_ref
 from loop.policy import (CENTRAL,
-                         REQUEST, SHA, TERMINAL, WORKER, WORKER_PATH,
+                         REQUEST, REVIEW_KINDS, SHA, TERMINAL, WORKER, WORKER_PATH,
                          Rejected, candidate_outcome, checkpoint_name, digest, loop_kind,
                          pipeline_budget, pipeline_limit, require, staged_source, supported_checkpoint)
 
@@ -37,7 +37,7 @@ def quiescent(api, state, read=None):
         intent = state.get(key)
         if (key == "task_intent" and intent and intent.get("status") == "acknowledged"
                 and intent.get("kind") == "pending_review"
-                and loop_kind(state["request"]) == "pr_review"):
+                and loop_kind(state["request"]) in REVIEW_KINDS):
             from loop.task_effects import payload
             request = state["request"]
             require(type(intent.get("review_id")) is int and intent["review_id"] > 0
