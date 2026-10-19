@@ -23,10 +23,10 @@ function element(tag, text, className) {
     return node;
 }
 
-function taskIcon() {
+function taskIcon(type = "spinner") {
     const icon = element("span", null, "task-icon");
     icon.setAttribute("aria-hidden", "true");
-    icon.append(element("span", null, "spinner"));
+    icon.append(element("span", null, type));
     return icon;
 }
 
@@ -408,7 +408,7 @@ function prCard(pr) {
         button.setAttribute("aria-label", `${actionLabel}: ${presentation.label}`);
         button.setAttribute("aria-description", presentation.detail);
         button.setAttribute("aria-busy", String(presentation.busy));
-        if (presentation.busy) button.append(taskIcon());
+        if (presentation.ciPending || presentation.busy) button.append(taskIcon(presentation.ciPending ? "hourglass" : "spinner"));
         button.append(element("span", actionLabel, "task-name"));
         button.addEventListener("click", () => taskAction(pr, kind));
         const detail = presentation.disabled && !presentation.busy && pr.actionBlock

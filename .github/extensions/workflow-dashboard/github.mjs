@@ -28,7 +28,10 @@ const evidenceFields = (summaryCI) => `
     number headRefOid
     mergeRequirements { conditions { __typename result } }
     commits(last: 1) { nodes { commit { oid statusCheckRollup {
-        ${summaryCI ? "state" : `contexts(first: 100) {
+        ${summaryCI ? `state contexts {
+            checkRunCountsByState { state count }
+            statusContextCountsByState { state count }
+        }` : `contexts(first: 100) {
             pageInfo { hasNextPage endCursor }
             nodes { ${CHECK_FIELDS} }
         }`}

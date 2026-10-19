@@ -103,12 +103,26 @@ function hasCopilotBodyFeedback(body) {
 function ciEvidence(rollup, summaryCI) {
     if (summaryCI) {
         let ci = "unknown";
+        let pending = 0;
         if (rollup === null) ci = "none";
         else if (typeof rollup?.state !== "string") throw new Error("Live CI summary is incomplete.");
         else if (rollup.state === "SUCCESS") ci = "passing";
         else if (["FAILURE", "ERROR"].includes(rollup.state)) ci = "failing";
         else if (["PENDING", "EXPECTED"].includes(rollup.state)) ci = "pending";
-        return { failing: null, pending: null, ci };
+        if (rollup !== null) {
+            const runs = rollup.contexts?.checkRunCountsByState;
+            const statuses = rollup.contexts?.statusContextCountsByState;
+            if (!Array.isArray(runs) || !Array.isArray(statuses)) throw new Error("Live CI progress is incomplete.");
+            for (const item of [...runs, ...statuses]) {
+                if (typeof item?.state !== "string" || !Number.isSafeInteger(item.count) || item.count < 0) {
+                    throw new Error("Live CI progress contains an invalid state count.");
+                }
+                if (["QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED", "PENDING", "EXPECTED"].includes(item.state)) {
+                    pending += item.count;
+                }
+            }
+        }
+        return { failing: null, pending, ci };
     }
     const checks = rollup === null ? [] : rollup?.contexts?.nodes;
     if (!Array.isArray(checks) || rollup !== null && rollup.contexts?.pageInfo?.hasNextPage !== false) {
@@ -212,7 +226,10 @@ export function normalizeEvidence(detail, sha, { summaryCI = false } = {}) {
 export function actionEvidence(pr, kind) {
     if (!["pr_conflict_resolver", "ci_fix", "copilot_review"].includes(kind)) return null;
     const evidence = pr.evidence?.sha === pr.sha ? pr.evidence : null;
-    const result = (label, detail, tone = "idle", disabled = false) => ({ label, detail, tone, disabled });
+    const ciPending = kind === "ci_fix" && evidence && !evidence.error && (evidence.pending > 0 || evidence.ci === "pending");
+    const result = (label, detail, tone = "idle", disabled = false) => ({
+        label, detail, tone, disabled, ...(ciPending ? { ciPending: true } : {}),
+    });
     if (!evidence || evidence.error) {
         const detail = evidence?.error ?? "Live action status is unavailable. Refresh to check whether this task is needed.";
         return result("Status unknown", kind === "ci_fix" ? `Refresh to check CI. ${detail}` : detail,
@@ -225,9 +242,9 @@ export function actionEvidence(pr, kind) {
     }
     if (kind === "ci_fix") {
         if (evidence.ci === "failing") return result("CI failing",
-            Number.isSafeInteger(evidence.failing) && evidence.failing > 0
+            (Number.isSafeInteger(evidence.failing) && evidence.failing > 0
                 ? `${evidence.failing} failing ${evidence.failing === 1 ? "check" : "checks"} on the latest PR commit.`
-                : "GitHub reports failing checks on the latest PR commit.", "needed");
+                : "GitHub reports failing checks on the latest PR commit.") + (ciPending ? " CI is still running." : ""), "needed");
         if (evidence.ci === "passing") return result("CI passing", "CI passed for the latest PR commit. Nothing to fix.", "idle", true);
         if (evidence.ci === "pending") return result("CI pending", evidence.failing === 0
             ? "CI is still running. No failing checks yet."
@@ -295,7 +312,7 @@ export function taskPresentation(pr, kind, workflowReady, actions = []) {
         ? "The workflow stopped because it could not interpret Copilot's latest review summary."
         : phase?.reason?.replaceAll("_", " ");
     const result = (label, tone = "idle", busy = false) => ({
-        label, tone, busy, disabled,
+        label, tone, busy, disabled, ...(workflowReady && evidence?.ciPending ? { ciPending: true } : {}),
         detail: dispatch?.message ?? (phase ? completionPresentation(phase)?.detail ?? phase.error ?? reason : null) ??
             pr.actionBlock ?? TASK_EFFECTS[kind],
     });

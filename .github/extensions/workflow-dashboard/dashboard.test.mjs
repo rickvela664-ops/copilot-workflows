@@ -1273,6 +1273,12 @@ test("busy icons rotate normally and use a static hourglass under reduced motion
         assert.ok(reduced.includes(declaration), `Reduced-motion icon requires ${declaration}`);
     }
     assert.match(reduced, /clip-path: polygon\(0 0, 100% 0, 100% 20%, 65% 50%, 100% 80%, 100% 100%, 0 100%, 0 80%, 35% 50%, 0 20%\);/);
+    const hourglass = styles.match(/^\.task-icon \.hourglass \{([^}]+)\}/m)?.[1];
+    assert.ok(hourglass);
+    assert.match(hourglass, /width: 14px; height: 14px;/);
+    assert.match(hourglass, /background: currentColor;/);
+    assert.match(hourglass, /clip-path: polygon\(/);
+    assert.doesNotMatch(hourglass, /animation/);
 });
 
 test("loopback serves assets and read-only endpoints; cross-origin data reads and invalid inputs fail explicitly", async (t) => {
@@ -1927,6 +1933,56 @@ test("Fix CI keeps its button label and explains current CI rather than an exhau
     assert.equal(button().disabled, true);
     assert.equal(button().children.length, 1);
     assert.equal(tooltipFor(button()).children[1].textContent, pr.actionBlock);
+});
+
+test("Fix CI shows a static hourglass for unfinished CI with or without failures", async () => {
+    const state = rendererState();
+    const pr = state.prs[0];
+    const requests = [];
+    const { renderer, nodes } = await rendererFixture(async (path) => {
+        requests.push(path);
+        return { ok: true, json: async () => state };
+    });
+    const button = () => taskButtons(nodes.get("prs").firstChild)
+        .find((node) => node["aria-label"].startsWith("Fix CI:"));
+    const initialRequests = requests.length;
+    for (const ci of ["pending", "failing"]) {
+        pr.evidence = { sha: pr.sha, ci, failing: ci === "failing" ? 1 : 0, pending: 4 };
+        renderer.render();
+        assert.equal(button().disabled, ci === "pending");
+        assert.equal(button()["data-tone"], ci === "failing" ? "needed" : "idle");
+        assert.equal(button()["aria-busy"], "false");
+        assert.equal(button().firstChild.className, "task-icon");
+        assert.equal(button().firstChild["aria-hidden"], "true");
+        assert.equal(button().firstChild.firstChild.className, "hourglass");
+        assert.equal(button().children[1].textContent, "Fix CI");
+        assert.match(tooltipFor(button()).children[1].textContent, /CI is still running/);
+        assert.ok(taskButtons(nodes.get("prs").firstChild).filter((node) => node !== button())
+            .every((node) => node.children.length === 1));
+    }
+    pr.phase = { kind: "ci_fix", sha: pr.sha, stage: "waiting_ci" };
+    pr.actionBlock = "A task is already active on this PR.";
+    renderer.render();
+    assert.equal(button()["aria-busy"], "true");
+    assert.equal(button().firstChild.firstChild.className, "hourglass");
+    Object.assign(pr.evidence, { ci: "passing", failing: 0, pending: 0 });
+    renderer.render();
+    assert.equal(button().firstChild.firstChild.className, "spinner");
+    pr.phase = null;
+    pr.actionBlock = null;
+    for (const evidence of [
+        { sha: pr.sha, ci: "passing", failing: 0, pending: 0 },
+        { sha: pr.sha, ci: "failing", failing: 1, pending: 0 },
+        { sha: pr.sha, ci: "none", pending: 0 },
+        { sha: pr.sha, ci: "pending", pending: 4, error: "CI read failed." },
+        { sha: "f".repeat(40), ci: "pending", pending: 4 },
+    ]) {
+        pr.evidence = evidence;
+        renderer.render();
+        assert.equal(button().children.length, 1);
+        assert.equal(button().firstChild.className, "task-name");
+    }
+    assert.equal(requests.length, initialRequests);
 });
 
 test("tooltips support hover and keyboard focus, dismissal and refresh without dispatching", async () => {
