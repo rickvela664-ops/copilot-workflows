@@ -76,6 +76,7 @@ network:
     - mise-versions.jdx.dev
     - tuf-repo-cdn.sigstore.dev
     - repo.maven.apache.org
+    - repo1.maven.org
     - plugins.gradle.org
     - plugins-artifacts.gradle.org
     - services.gradle.org
@@ -228,6 +229,11 @@ Source changes require appropriate existing formatting and focused checks.
 Use the inherited writable HOME, `JAVA_HOME` and `GRADLE_USER_HOME`; preserve AWF's
 `JAVA_TOOL_OPTIONS` proxy settings. Record actual commands and failures, never
 claim a missing tool, denied dependency or blocked check passed.
+
+For Maven Central resolution failures, check the same artifact coordinates at
+`https://repo1.maven.org/maven2/`. If available there, retry with a temporary
+build-tool repository override. Do not change dependency versions or disable TLS
+verification to make checks run.
 
 ## Task objectives
 

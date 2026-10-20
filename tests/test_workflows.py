@@ -144,12 +144,13 @@ class WorkflowTests(unittest.TestCase):
                                 text.index("Prepare fresh writable sandbox home"))
         self.assertIn("preserve AWF's\n`JAVA_TOOL_OPTIONS` proxy settings", worker)
 
-    def test_mise_installs_can_reach_version_metadata_and_sigstore_trust_roots(self):
+    def test_worker_network_covers_maven_central_mirrors_and_mise_bootstrap(self):
         root = Path(__file__).resolve().parents[1] / ".github" / "workflows"
         worker = (root / "copilot-worker.md").read_text(encoding="utf-8")
         network = worker.split("\nnetwork:\n", 1)[1].split("\ntools:", 1)[0]
         declared = set(re.findall(r"^    - (\S+)$", network, re.MULTILINE))
-        self.assertLessEqual({"mise-versions.jdx.dev", "tuf-repo-cdn.sigstore.dev"}, declared)
+        self.assertLessEqual({"repo.maven.apache.org", "repo1.maven.org",
+                              "mise-versions.jdx.dev", "tuf-repo-cdn.sigstore.dev"}, declared)
         compiled = (root / "copilot-worker.lock.yml").read_text(encoding="utf-8")
         config = json.loads(re.search(r"printf '%s\\n' '(\{.*\})' >", compiled)[1])
         self.assertEqual(declared, set(config["network"]["allowDomains"]))
