@@ -100,6 +100,9 @@ def pipeline_limit(request):
     else:
         public_request(request)
     kind = loop_kind(request)
+    if "stack" in request:
+        from loop.stacks import validate
+        validate(request)
     if not direct_inputs(request) and kind == "pr_description" and request.get("freeze_status") != "not_frozen":
         from loop.recommendations import description_diff, diff_anchors
         evidence = request.get("pr_diff")
@@ -356,6 +359,10 @@ def unchanged(request, pr):
     if diff_scope(request):
         require(pr["base"]["ref"] == request["base_ref"],
                 "PR base branch changed after freeze")
+    if kind == "pr_conflict_resolver":
+        require((pr.get("stack") or {}).get("number")
+                == (request.get("stack") or {}).get("number", request.get("stack_number")),
+                "Native stack membership changed after freeze")
 
 
 def check_target(api, request):
@@ -389,8 +396,8 @@ def candidate_outcome(value, request, candidate):
     kind = loop_kind(request)
     if kind == "pr_conflict_resolver":
         require(value["outcome"] == "blocked" or
-                (value["outcome"] == "merge") == candidate["changed"],
-                "Merge outcome contradicts candidate graph")
+                (value["outcome"] == ("rebase" if "stack" in request else "merge")) == candidate["changed"],
+                "Conflict-resolution outcome contradicts candidate graph")
     elif kind in REPORT_KINDS:
         require(not candidate["changed"] and not candidate["commits"]
                 and candidate["patch_sha256"] == hashlib.sha256(b"").hexdigest(),

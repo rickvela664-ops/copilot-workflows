@@ -893,6 +893,28 @@ test("missing and discontinuous publication boundaries do not invent a cumulativ
     assert.equal(recentTaskLog([record({})], [], 2000000).warnings.length, 1);
 });
 
+test("native stack rebases show each changed PR range, including layers above the selected PR", () => {
+    const branches = [
+        { pr: 12, parent: sha("a"), commit: sha("b"), changed: true,
+            commits: [{ commit: sha("b"), subject: "Rebase lower layer" }] },
+        { pr: 13, parent: sha("c"), commit: sha("d"), changed: true,
+            commits: [{ commit: sha("d"), subject: "Rebase upper layer" }] },
+        { pr: 14, parent: sha("e"), commit: sha("e"), changed: false, commits: [] },
+        { pr: 15, parent: sha("f"), commit: sha("b"), changed: true, commits: [] },
+    ];
+    const state = fixture({ stage: "complete", task_completion: { outcome: "rebase" },
+        publications: [{ request_id: requestId("a"), sha: sha("b"), effect: "push",
+            candidate: { parent: sha("a"), stack: branches } }],
+    }, { loop_kind: "pr_conflict_resolver" });
+    const ranges = recentTaskLog([record(state)], [completion()], 2000000).entries[0].changeRanges;
+    assert.deepEqual(ranges.map((range) => range.pr), [12, 13, 15]);
+    assert.equal(ranges[0].url, `https://github.com/example/project/pull/12/changes/${sha("a")}..${sha("b")}`);
+    assert.equal(ranges[1].url, `https://github.com/example/project/pull/13/changes/${sha("c")}..${sha("d")}`);
+    assert.equal(ranges[2].commits, 0);
+    state.publications[0].candidate.stack[0].commit = "invalid";
+    assert.equal(recentTaskLog([record(state)], [], 2000000).warnings.length, 1);
+});
+
 test("worker Actions associate by recorded identities and accept completed runs", () => {
     const phase = phaseSummary(record(fixture({}, { launch_run: { id: 202 } })));
     const run = { id: 202, run_attempt: 1, status: "queued", name: "Coordinator" };
@@ -1831,7 +1853,7 @@ test("failed conflict tooltips separate the last attempt from current conflict s
     assert.deepEqual(tooltipFor(button()).children.map((node) => [node.className, node.textContent]), [
         ["tooltip-status", "Last attempt failed"],
         ["tooltip-detail", "This PR still has merge conflicts with its target branch."],
-        ["tooltip-action", "This action brings changes from the target branch into your PR branch, resolves conflicts, and pushes the result. Your PR stays open."],
+        ["tooltip-action", TASK_EFFECTS.pr_conflict_resolver],
     ]);
     assert.equal(pr.phase.reason, "worker_failure");
 

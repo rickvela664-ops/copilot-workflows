@@ -255,6 +255,15 @@ def evidence(api, state, destination):
 def import_candidate(directory, bundle, request, candidate, fetch_source=None):
     personal(request)
     require(loop_kind(request) != "pr_description", "Description task has no Git candidate to import")
+    if "stack" in request:
+        from loop.stacks import verify as verify_stack
+        value = {"outcome": "rebase" if candidate["changed"] else "no_change"}
+        from loop.policy import canonical
+        imported = verify_stack({"result.json": canonical(value),
+                                 "candidate.bundle": Path(bundle).read_bytes()},
+                                request, fetch_source, directory)
+        require(imported == candidate, "Native stack import differs from verified candidate")
+        return
     git(["init", "--bare", "--quiet"], directory)
     if fetch_source is not None:
         fetch_source(directory)
@@ -310,7 +319,7 @@ def import_candidate(directory, bundle, request, candidate, fetch_source=None):
         resolved_tree(directory, request, candidate["tree"])
 
 
-def authenticated_push(directory, request, commit, token):
+def authenticated_push(directory, request, commit, token, *, candidate=None):
     personal(request)
     require(source_effect(request), "Report-only tasks cannot push")
     require(SHA.fullmatch(commit) and token.startswith("github_pat_"), "Invalid push binding/auth")
@@ -325,8 +334,14 @@ def authenticated_push(directory, request, commit, token):
     argv = ["git", "-c", "core.hooksPath=" + os.devnull, "-c", "credential.helper=",
             "-c", "protocol.file.allow=never", "-c", "protocol.ext.allow=never",
             "-c", "core.attributesFile=" + os.devnull, "push", "--porcelain"]
-    proc = subprocess.run(argv + ["https://github.com/" + request["head_repo"] + ".git",
-                                 commit + ":refs/heads/" + request["head_ref"]],
+    refspecs = [commit + ":refs/heads/" + request["head_ref"]]
+    if "stack" in request:
+        from loop.stacks import push_args
+        require(candidate is not None and candidate["commit"] == commit,
+                "Native stack push requires the complete verified candidate")
+        options, refspecs = push_args(request, candidate)
+        argv.extend(options)
+    proc = subprocess.run(argv + ["https://github.com/" + request["head_repo"] + ".git", *refspecs],
                           cwd=directory, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                           timeout=120, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
     require(len(proc.stdout) + len(proc.stderr) <= 1024 * 1024, "Git push output exceeds limit")
@@ -348,6 +363,10 @@ def plan(request, live, candidate, authorization, mode):
 
 
 def chain(candidate, request):
+    if "stack" in request:
+        from loop.stacks import chain as stack_chain
+        stack_chain(candidate, request)
+        return
     commits = candidate.get("commits")
     mapping = candidate.get("finding_commits")
     require(isinstance(commits, list) and len(commits) <= 100 and isinstance(mapping, dict)

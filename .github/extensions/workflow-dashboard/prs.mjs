@@ -18,7 +18,7 @@ const ROUTES = {
 export const TASK_EFFECTS = {
     copilot_review: "Fix valid Copilot findings in code or stale PR description text, then reply to and resolve bot threads. Push source fixes and repeat review until clean.",
     self_review: "Review this PR and push fixes until review is clean. Correct the description if needed.",
-    pr_conflict_resolver: "This action brings changes from the target branch into your PR branch, resolves conflicts, and pushes the result. Your PR stays open.",
+    pr_conflict_resolver: "Merge the target branch into an ordinary PR, or rebase every open layer of a native GitHub stack bottom-to-top. Resolve conflicts and push the result. All PRs stay open.",
     ci_fix: "Investigate failing checks and push fixes. Correct the description if needed. May rerun failed jobs.",
     pr_description: "Update the PR title and description if needed.",
     pr_simplify: "Simplify this PR's code without changing behavior, then push changes. Correct the description if needed.",

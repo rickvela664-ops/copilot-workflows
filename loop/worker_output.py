@@ -14,7 +14,12 @@ def package(request, repository, directory=Path("loop-output")):
     worker_result(value, request)
     bundle = (directory / "candidate.bundle").resolve()
     require(not bundle.exists(), "Candidate bundle already exists")
-    if value["outcome"] in {"fixes", "merge"}:
+    if value["outcome"] == "rebase":
+        require(repository is not None and not git(["status", "--porcelain"], repository),
+                "Native stack rebase requires a clean target repository")
+        from loop.stacks import package as package_stack
+        package_stack(request, repository, bundle)
+    elif value["outcome"] in {"fixes", "merge"}:
         require(source_effect(request) and repository is not None, "Code outcome requires a target repository")
         require(not git(["status", "--porcelain"], repository), "Candidate worktree has uncommitted changes")
         tip = git(["rev-parse", "HEAD"], repository).decode().strip()
@@ -50,7 +55,7 @@ def check_output(request, directory=Path("loop-output")):
         files[name] = data
     value = parse_json(files["result.json"])
     worker_result(value, request)
-    require(bool(files["candidate.bundle"]) == (value["outcome"] in {"fixes", "merge"}),
+    require(bool(files["candidate.bundle"]) == (value["outcome"] in {"fixes", "merge", "rebase"}),
             "Worker outcome contradicts candidate bundle")
 
 

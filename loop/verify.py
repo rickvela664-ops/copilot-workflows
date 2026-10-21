@@ -169,6 +169,9 @@ def verify_candidate(files, request, fetch_source=None, *, repository_dir=None):
             or "inputs" in request, "Task inputs must be independently acquired before verification")
     result = parse_json(files["result.json"])
     worker_result(result, request)
+    if "stack" in request:
+        from loop.stacks import verify as verify_stack
+        return verify_stack(files, request, fetch_source, repository_dir)
     bundle = files["candidate.bundle"]
     if loop_kind(request) == "pr_description":
         require(not bundle, "Description task cannot contain a source bundle")

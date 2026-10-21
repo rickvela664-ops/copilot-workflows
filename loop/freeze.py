@@ -125,10 +125,14 @@ def probe_target(api, number, revision, now=None, repo=None, actor_id=AUTHOR_ID,
         target["metadata"] = {"title": pr["title"], "body": pr["body"] or ""}
     now = int(time.time()) if now is None else now
     from loop.candidates import PROTOCOL
-    return dict(target, schema=2, protocol=PROTOCOL, request_id=uuid.uuid4().hex, workflow_revision=revision,
-                frozen_at=now, frozen_at_iso=iso(now),
-                input_mode="direct",
-                budgets=DEFAULTS.copy(), baseline_review_ids=[], findings=[], loop_kind=loop_kind)
+    request = dict(target, schema=2, protocol=PROTOCOL, request_id=uuid.uuid4().hex, workflow_revision=revision,
+                   frozen_at=now, frozen_at_iso=iso(now),
+                   input_mode="direct",
+                   budgets=DEFAULTS.copy(), baseline_review_ids=[], findings=[], loop_kind=loop_kind)
+    if loop_kind == "pr_conflict_resolver" and pr.get("stack") is not None:
+        from loop.stacks import freeze as freeze_stack
+        freeze_stack(api, request, pr)
+    return request
 
 
 def freeze(api, number, revision, now=None, repo=None, actor_id=AUTHOR_ID,

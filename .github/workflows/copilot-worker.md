@@ -261,7 +261,7 @@ return `blocked` rather than guessing.
   directly affected by it. Run appropriate checks on every pass. Return `fixes`
   after any source edits, `clean` only after a complete no-source-change review,
   or `blocked`.
-- `pr_conflict_resolver`: merge frozen `base_sha` into frozen `frozen_sha`.
+- `pr_conflict_resolver`: without `stack`, merge frozen `base_sha` into frozen `frozen_sha`.
   Read both histories first. Preserve both sides' current intent and repair resulting
   incompatibilities, including in files Git merged without textual conflicts.
   Use applicable repository instructions and both histories to distinguish current
@@ -273,8 +273,9 @@ return `blocked` rather than guessing.
   incomplete. Explain the evidence for supersession or the unresolved conflict in
   diagnostics. Return `merge` with one
   merge commit, head first and base second, `no_change` if the base is already
-  incorporated, or `blocked`. Never return `fixes` for this task. Never rebase
-  or land the PR.
+  incorporated, or `blocked`. Never return `fixes` for this task or land a PR.
+  When the request contains `stack`, follow the native-stack instructions below
+  instead of creating a merge commit.
 - `ci_fix`: diagnose each exact-head failure in `inputs.ci_evidence`, using its
   local logs and check evidence. Fix PR-attributable causes; unrelated failures
   need evidence. Return `fixes`, `no_change`, `rerun` or `blocked`. Diagnose every
@@ -324,6 +325,43 @@ Simplify and consistency tasks don't need builds solely to validate unchanged co
 An incomplete investigation or a check needed to decide a change still blocks.
 No task may invent a change to avoid a no-change result.
 
+## Native stack conflict resolution
+
+For a conflict request with `stack`, rebase every open layer in
+`stack.layers` bottom-to-top, including layers below and above the selected PR.
+The complete membership, including already-merged layers, stays unchanged.
+Never run `gh stack`, change stack metadata, retarget PRs, land a PR or push.
+The source helper fetches every frozen layer and the trunk. Read each layer's
+authoritative diff in `inputs.stack_diffs["<PR number>"].text`, its instructions
+and both histories before changing it.
+
+Start with `stack.base_sha` as the new base. For each layer, replay its own changes
+onto the new base, using `layer.merge_base_sha` as the old fork point and
+`layer.frozen_sha` as the source tip. Use ordinary `git rebase --onto`, without
+`--rebase-merges`, and resolve conflicts while preserving both sides' intent.
+Inspect the frozen layer diff as well as individual commits: a dropped merge
+commit can contain important conflict-resolution changes that must be preserved.
+Repair semantic incompatibilities and run appropriate focused checks for each
+affected layer before continuing.
+
+Keep original commit authors when replaying source commits. Use the inherited
+launch-owner committer identity, and add the Copilot App co-author trailer to every
+rewritten commit, for example with a rebase `--exec` that runs
+`git commit --amend --no-edit --trailer "Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>"`.
+New repair commits use the launch owner's author and committer identity.
+Do not preserve merge commits: every resulting layer must be a linear chain
+descending from the new base.
+
+Save each finished tip as `refs/heads/stack-<PR number>`, then use that tip as
+the next layer's new base. An unchanged layer still needs its candidate ref.
+If a layer already descends linearly from its new base, keep its original tip.
+Return `rebase` if any branch tip changes. Return `no_change` only when the
+entire stack already has a linear history from the frozen trunk, and restore
+HEAD to the selected `frozen_sha` for packaging that result.
+An incorporated immediate base alone does not establish a no-change stack.
+If any layer cannot be resolved, return `blocked` with no bundle; never return
+partial stack updates.
+
 ## Return native commits and a small result
 
 For source changes, create ordinary local Git commits, grouping related changes
@@ -337,8 +375,9 @@ Each commit needs a useful subject and this co-author trailer in its trailer blo
 Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>
 ```
 
-Ordinary tasks return linear commits descending from the frozen head. Conflict
-resolution returns one two-parent merge commit. Never push. Blocked tasks return
+Ordinary tasks return linear commits descending from the frozen head. Non-stack
+conflict resolution returns one two-parent merge commit; native stacks return the
+linear candidate refs described above. Never push. Blocked tasks return
 no candidate commits; explain the blocker instead of publishing partial work.
 
 Write `loop-output/result.json` and `loop-output/diagnostics.txt` in the central
@@ -378,12 +417,15 @@ For example, a completed self-review with no changes returns:
 {"schema":2,"request_digest":"<frozen digest>","input_identity":{},"outcome":"clean"}
 ```
 
-For a completed conflict resolution, use `merge` and copy the acquired input
+For a completed conflict resolution, without native stack membership, use `merge` and copy the acquired input
 identity from `inputs.identity`:
 
 ```json
 {"schema":2,"request_digest":"<frozen digest>","input_identity":{"pr_diff_sha256":"<acquired diff sha256>"},"outcome":"merge"}
 ```
+
+Native stack resolutions use `rebase` and copy both `pr_diff_sha256` and
+`stack_diffs_sha256` from `inputs.identity`.
 
 Package and check the result from the central workspace:
 
@@ -393,8 +435,9 @@ python3 -m loop.worker_output /tmp/target
 
 For description or other no-source work, omit the target argument.
 The helper creates `loop-output/candidate.bundle` from native commits, or an empty
-bundle for a no-change or blocked result. It checks every new commit's author and
-committer against the frozen owner before creating the bundle. Correct packaging
+bundle for a no-change or blocked result. It checks new commit identities against
+the frozen owner; stack rebases also permit the original frozen commit authors.
+Correct packaging
 errors before returning.
 Return exactly these three regular files. Packaging does not prove tests passed or
 authorize publication; the trusted publisher independently verifies the Git history.

@@ -16,7 +16,7 @@ Only the central launch owner can dispatch. All three draft review tasks accept 
 
 | Task effect | Selected secret owner | Required target access |
 | --- | --- | --- |
-| Fix commits or base merge | Head repository for push, base repository for upstream API | Head Contents write, base PR read; Workflows write for workflow edits |
+| Fix commits, base merge or stack rebase | Head repository for push, base repository for upstream API | Head Contents write, base PR read; Workflows write for workflow edits |
 | Description title/body PATCH | Base repository | Base Contents read and Pull requests write; no fork push permission |
 | Source-task description correction | Base repository | Base Pull requests write, alongside the task's existing source publication permissions |
 | Viewer-owned pending review | Base repository | Base Contents read and Pull requests write; no fork push permission |
@@ -220,11 +220,11 @@ Fresh external findings can freeze another worker within the same phase regardle
 
 Both kinds allow five total model pipelines including the initial and failed admitted work, without an overall deadline. Active phases never replenish the worker budget. Frozen historical budgets stay unchanged; only a new authorized, quiescent phase gets fresh budgets. No sixth worker exists.
 
-Landing PRs, changing draft state, force pushes, top-level comments and human-rooted thread replies are not allowed. `pr_description` can update title/body; all source-changing tasks can correct inaccurate descriptions without changing the title. Draft review cannot update metadata. Only `pr_conflict_resolver` can publish a base merge. Explicit Copilot-review launch also authorizes original-bot replies, resolution, and then fresh review; no other source-changing task handles threads or requests external review.
+Landing PRs, changing draft state, unguarded force pushes, top-level comments and human-rooted thread replies are not allowed. `pr_description` can update title/body; all source-changing tasks can correct inaccurate descriptions without changing the title. Draft review cannot update metadata. Only `pr_conflict_resolver` can publish a base merge or a native-stack rebase. Native-stack rebases update every open layer bottom-to-top and use one atomic push with an explicit force-with-lease for each frozen branch tip. Ordinary PR tasks never rewrite history. Explicit Copilot-review launch also authorizes original-bot replies, resolution, and then fresh review; no other source-changing task handles threads or requests external review.
 
 ## Native candidates and thread effects
 
-Fresh requests use `git-candidate-v1` and schema 2. `candidate.bundle` contains ordinary native commits, not model-authored provenance. Up to 100 linear commits are supported, or one merge commit with the frozen PR head first and frozen base second. Every intermediate change must satisfy path-safety, Git integrity checks and trusted-runtime protections. Existing pinned phases finish with their own contract; there is no in-place migration.
+Fresh requests use `git-candidate-v1` and schema 2. `candidate.bundle` contains ordinary native commits, not model-authored provenance. Up to 100 linear commits are supported, or one merge commit with the frozen PR head first and frozen base second. Native stack resolutions export `refs/heads/stack-<PR number>` for every open layer, including unchanged tips or layers whose changes are already upstream, with up to 100 linear commits per layer. Their frozen membership, ownership, trunk, branch tips and acquired PR diffs are independently checked. Replayed commits can retain their original authors; rewritten commits require the launch-owner committer and Copilot App attribution. A non-linear stack cannot return no-change just because its immediate base is incorporated. Every intermediate change must satisfy path-safety, Git integrity checks and trusted-runtime protections. Existing pinned phases finish with their own contract; there is no in-place migration.
 
 Every unresolved verified finding and complete conversation is retained without count or body-length caps. Empty ordinary commits, duplicate/foreign findings and incomplete mappings reject rather than truncate. API response, artifact, process-resource and runtime limits still apply.
 

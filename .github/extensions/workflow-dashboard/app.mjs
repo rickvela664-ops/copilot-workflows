@@ -323,7 +323,7 @@ function renderRunLog() {
             element("span", `Finished ${date(task.finished)}`));
         for (const range of task.changeRanges) {
             if (range.url) {
-                const changes = link(`Changes · ${range.commits} commit${range.commits === 1 ? "" : "s"}`, range.url);
+                const changes = link(`Changes${range.pr ? ` · #${range.pr}` : ""} · ${range.commits} commit${range.commits === 1 ? "" : "s"}`, range.url);
                 changes.title = `${short(range.base)}..${short(range.head)}`;
                 detail.append(changes);
             } else {

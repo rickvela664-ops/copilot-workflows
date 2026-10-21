@@ -2,16 +2,26 @@
 
 from pathlib import Path
 
-from loop.policy import direct_inputs, loop_kind, require
+from loop.policy import digest, direct_inputs, loop_kind, require
 
 
 def acquire(api, request, directory):
     if not direct_inputs(request):
         return request
     inputs = {"identity": {}}
+    if "stack" in request:
+        from loop.recommendations import collect_diff
+        from loop.stacks import check, layer_request
+        check(api, request)
+        inputs["stack_diffs"] = {
+            str(layer["pr"]): collect_diff(api, layer_request(request, layer))
+            for layer in request["stack"]["layers"]}
+        inputs["identity"]["stack_diffs_sha256"] = digest(inputs["stack_diffs"])
+        check(api, request)
     if loop_kind(request) not in {"copilot_review", "self_review"}:
         from loop.recommendations import collect_diff
-        inputs["pr_diff"] = collect_diff(api, request)
+        inputs["pr_diff"] = (inputs["stack_diffs"][str(request["pr"])] if "stack" in request
+                             else collect_diff(api, request))
         inputs["identity"]["pr_diff_sha256"] = inputs["pr_diff"]["sha256"]
     if loop_kind(request) == "ci_fix":
         from loop.ci import collect, same_attempts
@@ -26,6 +36,8 @@ def acquire(api, request, directory):
 def identity(value, request):
     expected = ({"pr_diff_sha256"} if loop_kind(request) not in
                 {"copilot_review", "self_review"} else set())
+    if "stack" in request:
+        expected.add("stack_diffs_sha256")
     require(isinstance(value, dict) and set(value) == expected
             and all(isinstance(item, str) and len(item) == 64
                     and all(c in "0123456789abcdef" for c in item) for item in value.values()),

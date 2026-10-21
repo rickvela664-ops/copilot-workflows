@@ -38,7 +38,7 @@ def semantic(value, request):
     if kind == "self_review":
         outcomes = {"fixes", "clean", "blocked"}
     elif kind == "pr_conflict_resolver":
-        outcomes = {"merge", "no_change", "blocked"}
+        outcomes = {"rebase" if "stack" in request else "merge", "no_change", "blocked"}
     elif kind == "ci_fix":
         outcomes |= {"rerun"}
     elif kind == "pr_description":

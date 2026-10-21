@@ -16,7 +16,7 @@ from loop.freeze import freeze
 from loop.policy import (AUTHOR_ID, CENTRAL, DEFAULTS, PROFILE, REPORT_KINDS, REQUEST, TERMINAL, Rejected,
                          bot, check_target, checkpoint_name, commit_author, digest, pipeline_budget, pipeline_limit,
                          candidate_outcome, effect_repository, loop_kind, public_request, require, staged_source,
-                         supported_checkpoint, timestamp, unchanged)
+                         source_effect, supported_checkpoint, timestamp, unchanged)
 from loop.publication import (PublisherAPI,
                               authenticated_push, chain, evidence, personal, plan,
                               reconcile_uncertain_push)
@@ -107,6 +107,9 @@ def unpublished_restart(central, read, prior, request, now):
     ref = read.call(f"repos/{old['head_repo']}/git/ref/heads/{old['head_ref']}")
     require(ref["object"]["sha"] == old["frozen_sha"],
             "Unpublished restart requires the actual head ref and PR at the original frozen head")
+    if "stack" in old:
+        from loop.stacks import check
+        check(read, old)
     require(request["launch_run"] == {
         "id": int(os.environ["GITHUB_RUN_ID"]), "attempt": 1, "actor_id": AUTHOR_ID},
         "Restart must bind to the fresh owner dispatch")
@@ -160,6 +163,18 @@ def start(store, api, request, previous_id, previous_generation, publisher_avail
                 }
         require(request["request_id"] != prior["request"]["request_id"],
                 "A fresh phase requires a new request identity")
+    branches = {layer["head_ref"] for layer in request["stack"]["layers"]} if "stack" in request else {
+        request["head_ref"]}
+    for other_name, other in entries.items():
+        old = other.get("request", {})
+        if (other_name != name and other_name.startswith("pr-v2-")
+                and old.get("head_repo") == request["head_repo"]
+                and ("stack" in request or "stack" in old)
+                and source_effect(request) and source_effect(old)):
+            other_branches = ({layer["head_ref"] for layer in old["stack"]["layers"]}
+                              if "stack" in old else {old.get("head_ref")})
+            if branches & other_branches:
+                quiescent(api, other, read)
     require(pipeline_limit(request) == DEFAULTS["max_iterations"],
             "A new phase requires the current freshly frozen request budget")
     require(request["frozen_at"] <= now, "New phase freeze is in the future")
@@ -186,7 +201,8 @@ def start(store, api, request, previous_id, previous_generation, publisher_avail
         value["restart"] = restart
     if auth_mode == "disabled" or not publisher_available:
         value.update(stage="blocked", reason="human_gate_target_repository_push_and_review_access")
-    elif loop_kind(request) == "pr_conflict_resolver" and request["merge_base_sha"] == request["base_sha"]:
+    elif (loop_kind(request) == "pr_conflict_resolver" and "stack" not in request
+          and request["merge_base_sha"] == request["base_sha"]):
         value.update(stage="complete", reason="base_already_incorporated",
                      task_completion={"outcome": "no_change"})
     elif not inference_available:
@@ -273,6 +289,12 @@ def authorize_publication_reconciliation(store, central, read, previous_id, gene
     chain(candidate, request)
     require(ref["object"]["sha"] == candidate["commit"],
             "Live ref does not prove the exact already-authorized push")
+    if "stack" in request:
+        from loop.stacks import check
+        observed = check(read, request, candidate)
+        require(all(ref == pr == entry["commit"] for (ref, pr), entry in
+                    zip(observed, candidate["stack"], strict=True)),
+                "Live native stack refs do not prove the complete authorized push")
     for entry in candidate["commits"]:
         commit = read.call(f"repos/{request['head_repo']}/git/commits/{entry['commit']}")
         require(commit["sha"] == entry["commit"] and commit["tree"]["sha"] == entry["tree"]
@@ -404,7 +426,12 @@ def publish(store, name, state, central, read, publisher, now, verified=None):
             from loop.ci import same_attempts
             same_attempts(read, request)
         if candidate["changed"]:
-            authenticated_push(directory, request, candidate["commit"], publisher.token)
+            if "stack" in request:
+                from loop.stacks import check
+                check(read, request)
+                authenticated_push(directory, request, candidate["commit"], publisher.token, candidate=candidate)
+            else:
+                authenticated_push(directory, request, candidate["commit"], publisher.token)
             state = cas(store, name, state, publication_intent=dict(
                 intent, status="acknowledged", acknowledged_at=int(time.time())))
         # No-change retains the frozen head without creating or pushing a commit.
@@ -412,6 +439,9 @@ def publish(store, name, state, central, read, publisher, now, verified=None):
 
 
 def confirm_push(store, name, state, read, now):
+    if "stack" in state["request"]:
+        from loop.stacks import confirm_push as confirm_stack
+        return confirm_stack(store, name, state, read, now)
     intent = state["publication_intent"]
     candidate = intent["candidate"]
     live = read.call(f"repos/{state['request']['repo']}/pulls/{state['request']['pr']}")
@@ -560,6 +590,12 @@ def watch_self(store, name, state, read, now):
 
 def watch_single(store, name, state, read, now):
     guard(store, name, state, read, now)
+    if "stack" in state["request"]:
+        from loop.stacks import check
+        observed = check(read, state["request"], state["report"]["candidate"])
+        require(all(ref == pr == entry["commit"] for (ref, pr), entry in
+                    zip(observed, state["report"]["candidate"]["stack"], strict=True)),
+                "Native stack publication is not fully confirmed")
     completion = {"outcome": state["report"]["dispositions"]["outcome"],
                   "publication": "pushed" if state["report"]["candidate"]["changed"] else "no_change"}
     return cas(store, name, state, stage="complete", reason="single_pass_complete",

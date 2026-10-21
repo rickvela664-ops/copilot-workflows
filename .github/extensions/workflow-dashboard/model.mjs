@@ -90,6 +90,13 @@ export function checkedRecord(record) {
     const candidates = [s.report?.candidate, s.publication_intent?.candidate,
         ...(s.publications ?? []).map((publication) => publication.candidate)];
     for (const candidate of candidates) {
+        if (candidate?.stack !== undefined && (!Array.isArray(candidate.stack) ||
+            !candidate.stack.every((entry) => entry && Number.isSafeInteger(entry.pr) && entry.pr > 0 &&
+                SHA.test(entry.parent) && SHA.test(entry.commit) && typeof entry.changed === "boolean" &&
+                Array.isArray(entry.commits) && entry.commits.every((commit) =>
+                    commit && SHA.test(commit.commit) && typeof commit.subject === "string")))) {
+            throw new Error(`Checkpoint ${record.name} has malformed native stack evidence.`);
+        }
         if (candidate?.commits !== undefined &&
             (!Array.isArray(candidate.commits) || candidate.commits.length > 100 ||
                 !candidate.commits.every((entry) => entry && typeof entry === "object" &&
@@ -320,18 +327,25 @@ export function targetHistory(records, target) {
 
 function publicationRanges(publications, request) {
     const ranges = [];
-    for (const publication of publications.filter((item) => item.effect === "push")) {
+    const pushes = publications.filter((item) => item.effect === "push").flatMap((publication) =>
+        publication.candidate?.stack
+            ? publication.candidate.stack.filter((entry) => entry.changed).map((entry) => ({
+                ...publication, pr: entry.pr, sha: entry.commit, candidate: entry,
+            })) : [publication]);
+    for (const publication of pushes) {
+        const number = publication.pr ?? request.pr;
         const base = publication.candidate?.parent ?? null;
         const head = publication.sha;
-        const commits = publication.candidate?.commits?.length || 1;
+        const commits = publication.candidate?.commits?.length ?? 1;
         const previous = ranges.at(-1);
-        if (previous?.url && base === previous.head) {
+        if (previous?.url && base === previous.head && (previous.pr ?? request.pr) === number) {
             previous.head = head;
             previous.commits += commits;
-            previous.url = prChangesLink(request.repo, request.pr, previous.base, head);
+            previous.url = prChangesLink(request.repo, number, previous.base, head);
             previous.commitUrl = commitLink(request.head_repo ?? request.repo, head);
         } else ranges.push({
-            base, head, commits, url: prChangesLink(request.repo, request.pr, base, head),
+            ...(publication.pr ? { pr: number } : {}),
+            base, head, commits, url: prChangesLink(request.repo, number, base, head),
             commitUrl: commitLink(request.head_repo ?? request.repo, head),
         });
     }

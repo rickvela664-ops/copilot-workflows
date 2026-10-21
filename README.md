@@ -18,7 +18,7 @@ The compiler's generic XPIA prompt is disabled because its blanket `.env` and ca
 | --- | --- | --- |
 | Address Copilot feedback | `copilot_review` | Existing findings, warranted source or description corrections, mandatory bot-thread handling and fresh external review until no findings remain |
 | Review and fix | `self_review` | Full-PR review/fix passes until an explicit later clean pass |
-| Resolve conflicts | `pr_conflict_resolver` | One merge of the launch-time base snapshot into the frozen PR head, with head first and base second. Never lands the PR. An incorporated base uses no worker or empty commit |
+| Resolve conflicts | `pr_conflict_resolver` | Ordinary PRs merge the frozen base into the PR head. Native GitHub stacks rebase all open layers bottom-to-top and publish their branches together. Never lands a PR |
 | Fix CI | `ci_fix` | Diagnose exact-head failures, repair only PR-attributable causes, then observe resulting CI. One evidence-based failed-jobs rerun per Actions run, including manual retries |
 | Update title & description | `pr_description` | Compare title/body with the supplied GitHub PR diff and PATCH only changed proposed text. No source checkout, commit or CI gate |
 | Simplify code | `pr_simplify` | One pass of major behavior-preserving simplifications in changed or directly affected code. No cosmetic or product-scope cleanup |
@@ -33,7 +33,23 @@ Default CI selection omits one-off dynamic Actions tasks, such as coding-agent r
 which are not expected to rerun on a pushed fix.
 Pending Actions runs affect the frozen CI selection only when they share a workflow
 and event with a selected check. Unrelated runs do not invalidate diagnosis setup.
-Conflict workers return `outcome: "merge"` for their two-parent candidate.
+Conflict workers return `outcome: "merge"` for an ordinary two-parent candidate,
+or `outcome: "rebase"` for native stack candidates.
+
+Resolve conflicts detects native GitHub stack membership automatically. Clicking
+it on any member rebases every open layer onto the frozen trunk and then onto the
+rebased layer below it. Already-merged members remain in the same stack. Replayed
+commits preserve their authors; new repair commits use the launch owner's identity.
+The worker resolves textual and semantic conflicts, including changes recorded in
+old merge resolutions, and returns only linear histories. Stack membership,
+ownership, trunk and every branch tip are rechecked before publication. All
+branches are pushed atomically with explicit per-branch force-with-lease guards;
+a concurrent push rejects the entire update. Nothing is merged into the trunk.
+An unresolved layer blocks the whole stack without publishing partial work.
+An incorporated immediate base does not skip a stack rebase. No changes is valid
+only when every open layer already descends linearly from the frozen trunk.
+Ordinary PRs retain their merge-only behavior and skip an already-incorporated base
+without consuming a worker.
 
 For example, launch a description task:
 
@@ -55,7 +71,7 @@ Verification and publication independently fetch the same source and reacquire n
 
 Read-only API requests, including explicit GraphQL queries, and signed log/artifact downloads retry transient server errors, timeouts, TLS EOFs and connection resets up to three attempts within the execution deadline. Checkpoint Git blob uploads use the same retries: identical content creates the same immutable object without moving a branch ref. Interrupted downloads restart with a fresh signed URL and discard partial evidence. Certificate verification and permission failures are not retried, and all other mutations are never retried.
 
-Upstream commits do not invalidate a frozen task. PR-head changes and retargeting to a different base branch still stop it. Conflict resolution merges the launch-time base snapshot; newer upstream commits are not included in that merge. Later review/fix and CI-repair passes freeze the current base without resetting their worker budget. Description and pending-review publication still recheck the actual GitHub PR diff.
+Upstream commits do not invalidate an ordinary frozen task. PR-head changes and retargeting to a different base branch still stop it. Ordinary conflict resolution merges the launch-time base snapshot; newer upstream commits are not included in that merge. Native stack rebases stop if the frozen trunk, membership or any open layer changes. Later review/fix and CI-repair passes freeze the current base without resetting their worker budget. Description and pending-review publication still recheck the actual GitHub PR diff.
 
 Conflict resolution can add new files when needed to preserve both sides' intent, such as moving incoming release notes into changelog fragments, and repair semantic incompatibilities in files Git merged without textual conflicts. When incoming guidance and changes explicitly supersede older wording, workers update migrated or copied content consistently instead of treating an older restoration commit as an unresolved conflict. Incoming changes do not automatically override deliberate PR behavior; diagnostics explain the evidence supporting the resolution.
 

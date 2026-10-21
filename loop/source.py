@@ -110,6 +110,10 @@ def source_limits():
 
 
 def snapshot_identity(directory, sha, request=None):
+    if request is not None and "stack" in request:
+        from loop.stacks import source_identity
+        require(sha == request["frozen_sha"], "Native stack selected source mismatch")
+        return source_identity(directory, request)
     require(git(["rev-parse", "refs/heads/snapshot"], directory).decode().strip() == sha,
             "Source snapshot head mismatch")
     refs = ["snapshot"]
@@ -137,6 +141,9 @@ def snapshot_identity(directory, sha, request=None):
 
 def acquire_source(directory, request, fetch=None):
     public_request(request)
+    if "stack" in request:
+        from loop.stacks import acquire_source as acquire_stack
+        return acquire_stack(directory, request, fetch)
     git_dir = git(["rev-parse", "--git-dir"], directory).decode().strip()
     shallow_path = Path(directory) / git_dir / "shallow"
     if fetch is None:
