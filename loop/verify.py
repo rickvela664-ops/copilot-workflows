@@ -247,7 +247,8 @@ def verify_candidate(files, request, fetch_source=None, *, repository_dir=None):
                     "Candidate parents differ from the frozen linear or merge history")
             verify_commit_author(directory, commit, request)
             body = git(["show", "-s", "--format=%B", commit], directory).decode("utf-8").strip()
-            require(body.endswith(TRAILER), "Candidate commit lacks Copilot co-author trailer")
+            trailers = git(["interpret-trailers", "--parse"], directory, body.encode("utf-8")).decode("utf-8")
+            require(TRAILER in trailers.splitlines(), "Candidate commit lacks Copilot co-author trailer")
             subject = body.splitlines()[0]
             prose(subject, summary=True)
             tree = git(["rev-parse", commit + "^{tree}"], directory).decode().strip()

@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from loop.api import API, APIError
-from loop.candidates import semantic
+from loop.candidates import TRAILER, semantic
 from loop.ci import collect, diagnoses, same_attempts
 from loop.coordinator import cancel, checkpoint, dispatch, quiescent
 from loop.freeze import freeze, probe_target
@@ -1213,6 +1213,22 @@ class MergeGitTests(unittest.TestCase):
                                  self.copy_source(directory))
                 self.assertEqual(candidate["commit"] + " " + req["frozen_sha"] + " " + req["base_sha"],
                                  git(["rev-list", "--parents", "-1", candidate["commit"]], imported).decode().strip())
+
+    def test_merge_accepts_copilot_attribution_before_another_coauthor(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as package, \
+                tempfile.TemporaryDirectory() as imported:
+            req = self.context(directory, equal=True)
+            trailers = TRAILER + "\nCo-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+            with patch("tests.support.TRAILER", trailers):
+                candidate = reconstruct(
+                    {"result.json": canonical(result(req, "merge")), "candidate.patch": b""},
+                    req, self.copy_source(directory), package)
+            import_candidate(imported, Path(package, "candidate.bundle"), req, candidate,
+                             self.copy_source(directory))
+            self.assertEqual(candidate["commit"], git(["rev-parse", "candidate"], imported).decode().strip())
+            self.assertEqual([req["frozen_sha"], req["base_sha"]], candidate["commits"][0]["parents"])
+            self.assertTrue(git(["show", "-s", "--format=%B", "candidate"], imported).decode().strip()
+                            .endswith(trailers))
 
     def test_unresolved_conflicts_reject(self):
         for conflicting in (True,):

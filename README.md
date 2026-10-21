@@ -135,6 +135,8 @@ Reject stale snapshot generations
 Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>
 ```
 
+Other Git trailers can appear before or after this attribution.
+
 The worker returns a small semantic result alongside its native Git bundle. Copilot findings select their fixing commit by its 1-based history index; the trusted publisher derives the actual SHA from Git.
 
 Only the trusted publisher handles threads. Fixed replies start `Addressed in <commit sha>.`; description corrections start `PR description updated. No code change.` after the metadata update is confirmed; other supported no-code decisions start `No code change.` Each includes the finding's concrete explanation, without repeating the original comment. No-code decisions push no empty commit. Body-only findings receive no invented inline or top-level comment.

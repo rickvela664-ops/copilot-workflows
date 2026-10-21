@@ -226,6 +226,11 @@ includes the complete frozen findings and conversations.
 Any target-repository file may be read or changed when needed for the selected task.
 Stay focused on that task, preserve intended behavior and don't do unrelated cleanup.
 Source changes require appropriate existing formatting and focused checks.
+Run the narrowest applicable formatter in apply mode before behavioral checks,
+without a preliminary format-only check. Combine compatible focused checks in one
+build invocation and reuse passing results while relevant inputs are unchanged.
+Keep build caching enabled; use clean builds, forced reruns or cache bypasses only
+when investigating stale or corrupt outputs.
 Use the inherited writable HOME, `JAVA_HOME` and `GRADLE_USER_HOME`; preserve AWF's
 `JAVA_TOOL_OPTIONS` proxy settings. Record actual commands and failures, never
 claim a missing tool, denied dependency or blocked check passed.
@@ -326,7 +331,7 @@ and separating unrelated causes. Stage new files too. The inherited Git author
 and committer environment already uses the frozen launch owner's name and email;
 ordinary `git commit` commands preserve that identity.
 
-Each commit needs a useful subject and the final trailer:
+Each commit needs a useful subject and this co-author trailer in its trailer block:
 
 ```text
 Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>
