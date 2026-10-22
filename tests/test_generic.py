@@ -18,7 +18,7 @@ from loop.publication import PublisherAPI, acceptance, authenticated_push
 from loop.reviews import exact_ci, fresh_collection, select_checks
 from loop.source import SourceAPI, import_source, package_source
 from loop.state import State
-from loop.verify import git, safe_path
+from loop.verify import WorkerEvidencePending, git, parse_json, safe_path
 from tests import test_live as live_fixtures
 from tests import test_loop as loop_fixtures
 from tests.test_live import (CI_CHECK, FIXTURE, Read, Publisher,
@@ -145,6 +145,49 @@ class GenericTests(unittest.TestCase):
                     self.assertRaisesRegex(Rejected, "read-only"):
                 operation(Mock(), store, args)
             self.assertEqual(before, store.entries[name])
+
+    def test_live_verification_waits_without_publishing_when_agent_metadata_is_pending(self):
+        state = live_state(stage="verify_pending")
+        store, name = stored(state)
+        environment = {
+            "PR": "1", "REQUEST_ID": state["request"]["request_id"], "GENERATION": "6",
+            "GITHUB_SHA": REVISION, "GITHUB_RUN_ATTEMPT": "1", "GITHUB_RUN_ID": "99",
+            "EXPECTED_STAGE": "verify_pending", "TARGET_REPO": FIXTURE,
+        }
+        with patch.dict(os.environ, environment), patch("loop.live.API"), \
+                patch("loop.live.State", return_value=store), \
+                patch("loop.live.git", return_value=REVISION.encode()), \
+                patch("loop.cli.git", return_value=REVISION.encode()), \
+                patch("loop.live.publisher_for") as publisher, \
+                patch("loop.publication.worker_evidence", side_effect=WorkerEvidencePending(
+                    "Successful worker run has incomplete agent job metadata")), \
+                patch("loop.cli.Path.write_bytes") as write_report, \
+                patch("loop.cli.time.time", return_value=200), \
+                patch("loop.live.advance") as advance:
+            live_main()
+        waiting = store.entries[name]
+        self.assertEqual("verify_pending", waiting["stage"])
+        self.assertEqual("worker_evidence_pending", waiting["reason"])
+        self.assertEqual(500, waiting["next_check_at"])
+        self.assertEqual(state["iteration"], waiting["iteration"])
+        self.assertEqual(state["run"], waiting["run"])
+        self.assertEqual("pending", parse_json(write_report.call_args.args[0])["verification"])
+        self.assertEqual([], waiting["publications"])
+        publisher.return_value.identity.assert_not_called()
+        advance.assert_not_called()
+        verified, _ = live_fixtures.AcceptanceTests().context()
+        with patch.dict(os.environ, dict(environment, GITHUB_RUN_ID="100")), \
+                patch("loop.cli.git", return_value=REVISION.encode()), \
+                patch("loop.publication.worker_evidence", return_value=(verified["report"], [])), \
+                patch("loop.cli.Path.write_bytes"), patch("loop.cli.time.time", return_value=500):
+            ready = verify_pending(Mock(), store, SimpleNamespace(
+                pr="1", request_id=state["request"]["request_id"], generation="6", repo=FIXTURE),
+                read=Read())
+        self.assertEqual("publish_pending", ready["stage"])
+        self.assertEqual(state["iteration"], ready["iteration"])
+        self.assertEqual(state["run"], ready["run"])
+        self.assertEqual({"id": 100, "attempt": 1}, ready["verification_run"])
+        self.assertEqual(digest(ready["report"]), acceptance(ready)["verification_sha256"])
 
     def test_checkpoint_writes_bind_the_frozen_repository_namespace(self):
         with self.assertRaisesRegex(Rejected, "namespace"):

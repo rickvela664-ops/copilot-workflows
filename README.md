@@ -46,6 +46,8 @@ ownership, trunk and every branch tip are rechecked before publication. All
 branches are pushed atomically with explicit per-branch force-with-lease guards;
 a concurrent push rejects the entire update. Nothing is merged into the trunk.
 An unresolved layer blocks the whole stack without publishing partial work.
+Stacks can mix owner-authored and owner-attributed bot PRs; each layer retains
+its own frozen author identity.
 An incorporated immediate base does not skip a stack rebase. No changes is valid
 only when every open layer already descends linearly from the frozen trunk.
 Ordinary PRs retain their merge-only behavior and skip an already-incorporated base
@@ -70,6 +72,8 @@ Checkpoints record PR/head/base identities, CI run/attempt/job metadata and task
 Verification and publication independently fetch the same source and reacquire needed diff/log evidence. Worker results bind the acquired diff hash, and changed CI runs or attempts stop publication. Conflict source acquisition deepens until both selected tips reach the merge base, without a commit-count limit. Conflict workers use applicable instructions and both histories to distinguish current requirements from superseded choices. Unresolved incompatible requirements block instead of choosing a side. Existing pinned phases retain their original input transport.
 
 Read-only API requests, including explicit GraphQL queries, and signed log/artifact downloads retry transient server errors, timeouts, TLS EOFs and connection resets up to three attempts within the execution deadline. Checkpoint Git blob uploads use the same retries: identical content creates the same immutable object without moving a branch ref. Interrupted downloads restart with a fresh signed URL and discard partial evidence. Certificate verification and permission failures are not retried, and all other mutations are never retried.
+
+If a successful worker run's jobs API has not yet returned a completed agent job, verification waits for a fresh read on the next coordinator check. It does not rerun the worker or publish anything while evidence is incomplete. Failed or duplicate agent jobs still stop verification.
 
 Upstream commits do not invalidate an ordinary frozen task. PR-head changes and retargeting to a different base branch still stop it. Ordinary conflict resolution merges the launch-time base snapshot; newer upstream commits are not included in that merge. Native stack rebases stop if the frozen trunk, membership or any open layer changes. Later review/fix and CI-repair passes freeze the current base without resetting their worker budget. Description and pending-review publication still recheck the actual GitHub PR diff.
 

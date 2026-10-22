@@ -13,7 +13,7 @@ from loop.policy import (Rejected, canonical, candidate_outcome, commit_author, 
                          pipeline_limit)
 from loop.publication import authenticated_push, chain, import_candidate
 from loop.source import acquire_source
-from loop.stacks import check, derive, push_args, refs
+from loop.stacks import check, derive, layer_request, push_args, refs
 from loop.verify import git, verify, verify_candidate
 from loop.worker_output import package
 from tests.test_live import TEST_TOKEN, personal_pr, zipped
@@ -25,6 +25,7 @@ class StackRead:
     def __init__(self, directory, request, trunk, lower, upper):
         self.directory = directory
         self.repo = request["repo"]
+        self.owner = request["commit_author"]
         self.tips = {"main": trunk, "lower": lower, "upper": upper}
         self.prs = {}
         for number, ref, base in ((1, "lower", "main"), (2, "upper", "lower")):
@@ -45,6 +46,8 @@ class StackRead:
     def call(self, path, method="GET", data=None, **kwargs):
         assert method == "GET"
         root = f"repos/{self.repo}"
+        if path == f"user/{self.owner['id']}":
+            return self.owner
         if path == root + "/stacks/3":
             return self.detail()
         if path.startswith(root + "/git/ref/heads/"):
@@ -179,6 +182,24 @@ class StackTests(unittest.TestCase):
             read.merged[0]["merged_at"] = None
             with self.assertRaisesRegex(Rejected, "closed unmerged"):
                 check(read, frozen)
+
+    def test_bot_and_human_stack_layers_keep_their_own_author_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _, read = self.context(directory)
+            read.prs[1]["user"].update(id=999, type="Bot", login="dependabot[bot]")
+            for selected in (1, 2):
+                with self.subTest(selected=selected):
+                    req = freeze(read, selected, REVISION, 100, read.repo,
+                                 loop_kind="pr_conflict_resolver")
+                    req = acquire(read, req, directory)
+                    check(read, req)
+                    lower, upper = req["stack"]["layers"]
+                    self.assertEqual(999, layer_request(req, lower)["pr_author_id"])
+                    self.assertNotIn("pr_author_id", layer_request(req, upper))
+                    read.prs[1]["user"]["id"] = 1000
+                    with self.assertRaisesRegex(Rejected, "Target changed after freeze"):
+                        check(read, req)
+                    read.prs[1]["user"]["id"] = 999
 
     def test_source_deepens_past_merge_bases_to_keep_side_history_complete(self):
         with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as acquired:

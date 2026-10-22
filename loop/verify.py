@@ -21,6 +21,10 @@ from loop.policy import direct_inputs
 FILES = {"result.json", "candidate.bundle", "diagnostics.txt"}
 
 
+class WorkerEvidencePending(RuntimeError):
+    pass
+
+
 def unique_json(pairs):
     result = {}
     for key, value in pairs:
@@ -58,7 +62,11 @@ def artifact_metadata(api, run, request):
             "Worker run did not complete successfully")
     jobs = api.pages(f"repos/{CENTRAL}/actions/runs/{run['id']}/attempts/1/jobs", "jobs")
     agent = [j for j in jobs if j["name"] == "agent"]
-    require(len(agent) == 1 and agent[0]["conclusion"] == "success", "Agent job incomplete")
+    require(len(agent) <= 1, "Duplicate agent jobs")
+    if not agent or agent[0]["conclusion"] is None:
+        raise WorkerEvidencePending("Successful worker run has incomplete agent job metadata")
+    require(agent[0]["conclusion"] == "success",
+            "Agent job did not succeed: " + str(agent[0]["conclusion"]))
     all_artifacts = api.pages(f"repos/{CENTRAL}/actions/runs/{run['id']}/artifacts", "artifacts")
     name = f"candidate-{run['id']}-1"
     selected = [a for a in all_artifacts if a["name"] == name]

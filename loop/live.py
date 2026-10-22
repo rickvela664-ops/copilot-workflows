@@ -767,7 +767,7 @@ def main():
             state = verify_pending(central, store, Namespace(
                 pr=state["request"]["pr"], request_id=state["request"]["request_id"],
                 repo=state["request"]["repo"], generation=state["generation"]), directory, read)
-            if state["stage"] in TERMINAL:
+            if state["stage"] == "verify_pending" or state["stage"] in TERMINAL:
                 from loop.cli import summary
                 summary(state)
                 return

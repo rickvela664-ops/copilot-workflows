@@ -23,7 +23,8 @@ from loop.policy import (AUTHOR_ID, BOT_ID, BOT_NODE, CENTRAL, DEFAULTS, Rejecte
 from loop.state import Conflict, State
 from loop.publication import plan, reconcile_uncertain_push
 from loop.worker_home import prepare_home
-from loop.verify import FILES, artifact_metadata, git, parse_json, read_zip, safe_path
+from loop.verify import (FILES, WorkerEvidencePending, artifact_metadata, git,
+                         parse_json, read_zip, safe_path)
 from loop.source import (SourceAPI, bind_manifest, download_source, gated_request, import_source,
                          package_source, public_fetch, source_api, source_metadata, target_api)
 
@@ -612,6 +613,27 @@ class ArtifactTests(unittest.TestCase):
                 artifact_metadata(Artifacts(), run(), request())
             candidate.clear()
             candidate.update(original)
+
+    def test_missing_or_unfinished_agent_job_metadata_waits_for_a_fresh_read(self):
+        for jobs in ([], [{"name": "agent", "conclusion": None}]):
+            api = Mock()
+            api.pages.return_value = jobs
+            with self.subTest(jobs=jobs), self.assertRaisesRegex(
+                    WorkerEvidencePending, "incomplete agent job metadata"):
+                artifact_metadata(api, run(), request())
+            api.pages.assert_called_once_with(
+                f"repos/{CENTRAL}/actions/runs/24/attempts/1/jobs", "jobs")
+
+    def test_failed_or_duplicate_agent_jobs_cannot_verify_artifacts(self):
+        for jobs in ([{"name": "agent", "conclusion": conclusion}]
+                     for conclusion in ("failure", "cancelled", "skipped", "timed_out")):
+            api = Mock()
+            api.pages.return_value = jobs
+            with self.subTest(jobs=jobs), self.assertRaisesRegex(Rejected, "Agent job did not succeed"):
+                artifact_metadata(api, run(), request())
+        api.pages.return_value = [{"name": "agent", "conclusion": "success"}] * 2
+        with self.assertRaisesRegex(Rejected, "Duplicate agent jobs"):
+            artifact_metadata(api, run(), request())
 
     def test_no_credentials_and_hidden_windows_subprocess(self):
         with patch.dict(os.environ, {"GH_TOKEN": "sentinel", "GIT_CONFIG_COUNT": "1"}):

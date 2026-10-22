@@ -9,7 +9,7 @@ from loop.policy import (SHA, attributed_owner, commit_author, eligible, exact,
 
 def layer_request(request, layer):
     return dict({key: value for key, value in request.items()
-                 if key not in {"stack", "inputs"}}, **layer,
+                 if key not in {"stack", "inputs", "pr_author_id"}}, **layer,
                 stack_number=request["stack"]["number"])
 
 

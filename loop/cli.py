@@ -18,7 +18,7 @@ from loop.policy import (CENTRAL, LOOP_KINDS, REQUEST, REVIEW_KINDS, TERMINAL, R
                          staged_source, publication_gate,
                          pipeline_budget, require, supported_checkpoint)
 from loop.state import State
-from loop.verify import artifact_metadata, git, parse_json
+from loop.verify import WorkerEvidencePending, artifact_metadata, git, parse_json
 from loop.source import (bind_manifest, download_source, gated_request,
                          package_source, source_metadata, target_api)
 from loop.inputs import acquire as acquire_inputs
@@ -161,6 +161,16 @@ def verify_pending(api, store, args, directory=None, read=None):
         result["verification_run"] = {"id": int(os.environ["GITHUB_RUN_ID"]), "attempt": 1}
         report.update(verification="verified", result=result)
         state = record_result(store, name, state, result, artifacts)
+        return state
+    except WorkerEvidencePending as error:
+        report.update(verification="pending", error=str(error))
+        def pending(current):
+            require(current == state, "Cancelled or replaced verification")
+            current.update(reason="worker_evidence_pending", report=report,
+                           next_check_at=int(time.time()) + 300)
+            return current
+        state = store.update(name, pending)
+        summary(state)
         return state
     except (Rejected, ValueError, KeyError, OSError, RuntimeError, subprocess.SubprocessError) as error:
         report["error"] = type(error).__name__ + ": " + str(error)[:1000]
