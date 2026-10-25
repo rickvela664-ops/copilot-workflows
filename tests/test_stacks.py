@@ -5,11 +5,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from loop.candidates import TRAILER
+from loop.api import APIError
+from loop.candidates import TRAILER, semantic
 from loop.freeze import freeze
 from loop.inputs import acquire
 from loop.live import confirm_push, publish, start, watch_single
-from loop.policy import (Rejected, canonical, candidate_outcome, commit_author, digest,
+from loop.policy import (Rejected, canonical, candidate_outcome, commit_author,
                          pipeline_limit)
 from loop.publication import authenticated_push, chain, import_candidate
 from loop.source import acquire_source
@@ -63,7 +64,7 @@ class StackRead:
             base = git(["merge-base", pr["base"]["sha"], pr["head"]["sha"]],
                        self.directory).decode().strip()
             if kwargs.get("raw"):
-                return git(["diff", base, pr["head"]["sha"]], self.directory)
+                raise APIError(406, "Sorry, the diff exceeded the maximum number of lines (20000)")
             pr["changed_files"] = len(self.pages(path + "/files"))
             return pr
         raise AssertionError(path)
@@ -87,20 +88,25 @@ class StackRead:
 
 
 class StackTests(unittest.TestCase):
-    def context(self, directory, *, linear=False, selected=2):
+    def context(self, directory, *, linear=False, selected=2, large=False):
         git(["init", "--bare", "--quiet"], directory)
         old = objects(directory, {"A.txt": "old\n", "B.txt": "old\n"})
         trunk = objects(directory, {"A.txt": "incoming\n", "B.txt": "old\n",
                                     "Upstream.txt": "incoming\n"}, [old])
         lower_tree = {"A.txt": "lower and incoming\n", "B.txt": "old\n",
                       "Upstream.txt": "incoming\n"}
+        if large:
+            lower_tree["Large.txt"] = "large PR content\n" * 20001
         upper_tree = dict(lower_tree, **{"B.txt": "upper\n"})
         if linear:
             lower = objects(directory, lower_tree, [trunk], "Lower")
             upper = objects(directory, upper_tree, [lower], "Upper")
         else:
-            original_lower = objects(directory, {"A.txt": "lower\n", "B.txt": "old\n"}, [old])
-            original_upper = objects(directory, {"A.txt": "lower\n", "B.txt": "upper\n"},
+            original_tree = {"A.txt": "lower\n", "B.txt": "old\n"}
+            if large:
+                original_tree["Large.txt"] = lower_tree["Large.txt"]
+            original_lower = objects(directory, original_tree, [old])
+            original_upper = objects(directory, dict(original_tree, **{"B.txt": "upper\n"}),
                                      [original_lower])
             lower = objects(directory, lower_tree, [original_lower, trunk], "Merge lower")
             upper = objects(directory, upper_tree, [original_upper, lower], "Merge upper")
@@ -153,14 +159,15 @@ class StackTests(unittest.TestCase):
             package(request, worker, Path(output))
         return {path.name: path.read_bytes() for path in Path(output).iterdir()}, tips
 
-    def test_native_stack_freezes_every_open_layer_and_diffs(self):
+    def test_large_native_stack_freezes_and_acquires_every_open_layer(self):
         with tempfile.TemporaryDirectory() as directory:
-            req, read = self.context(directory)
+            req, read = self.context(directory, large=True)
             self.assertEqual([1, 2], [layer["pr"] for layer in req["stack"]["layers"]])
             self.assertEqual(req["base_sha"], req["merge_base_sha"])
-            self.assertEqual({"1", "2"}, set(req["inputs"]["stack_diffs"]))
-            self.assertEqual(digest(req["inputs"]["stack_diffs"]),
-                             req["inputs"]["identity"]["stack_diffs_sha256"])
+            lower = req["stack"]["layers"][0]
+            self.assertGreater(len(git(["diff", lower["merge_base_sha"], lower["frozen_sha"]],
+                                       directory).splitlines()), 20000)
+            semantic(result(req, "rebase"), req)
             pipeline_limit(req)
             _, state = start(MemoryState(), FakeAPI(), req, "", 0, True,
                              "fine_grained_pat", [], True, 100)
@@ -282,7 +289,7 @@ class StackTests(unittest.TestCase):
             with self.subTest(selected=selected), tempfile.TemporaryDirectory() as directory, \
                     tempfile.TemporaryDirectory() as output, tempfile.TemporaryDirectory() as verified, \
                     tempfile.TemporaryDirectory() as imported:
-                req, _ = self.context(directory, selected=selected)
+                req, _ = self.context(directory, selected=selected, large=True)
                 files, tips = self.files(directory, req, output)
                 candidate = verify_candidate(files, req, self.fetch(directory, req), repository_dir=verified)
                 candidate_outcome(result(req, "rebase"), req, candidate)
@@ -301,14 +308,15 @@ class StackTests(unittest.TestCase):
                 self.assertEqual(candidate["commit"],
                                  git(["rev-parse", "candidate"], imported).decode().strip())
 
-    def test_missing_refs_diff_drift_and_foreign_authors_are_rejected(self):
+    def test_missing_refs_frozen_source_drift_and_foreign_authors_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as output:
             req, _ = self.context(directory)
             files, _ = self.files(directory, req, output)
             changed = copy.deepcopy(req)
-            changed["inputs"]["stack_diffs"]["1"]["text"] = ""
-            with self.assertRaisesRegex(Rejected, "complete frozen head"):
-                verify_candidate(files, changed, self.fetch(directory, req))
+            changed["stack"]["layers"][0]["merge_base_sha"] = changed["stack"]["layers"][0]["frozen_sha"]
+            changed_files = dict(files, **{"result.json": canonical(result(changed, "rebase"))})
+            with self.assertRaisesRegex(Rejected, "Incomplete frozen native stack history"):
+                verify_candidate(changed_files, changed, self.fetch(directory, req))
             bad = self.rewritten(directory, req, bad_author=True)
             with self.assertRaisesRegex(Rejected, "author or committer"):
                 derive(directory, req, bad, "")

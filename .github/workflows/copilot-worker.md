@@ -218,10 +218,12 @@ git(["checkout", "--quiet", "--detach", request["frozen_sha"]], target)
 assert git(["rev-parse", "HEAD"], target).decode().strip() == request["frozen_sha"]
 ```
 
-Read the target's AGENTS.md and applicable instructions. For diff-based tasks,
+Read the target's AGENTS.md and applicable instructions. For tasks with `inputs.pr_diff`,
 read the complete `inputs.pr_diff.text` in bounded sections and inspect surrounding
-code. Self-review uses the full merge-base-to-head Git diff. Copilot feedback
-includes the complete frozen findings and conversations.
+code. Self-review and conflict resolution use the full merge-base-to-head Git
+diff from the fetched frozen commits, not the GitHub diff API. Conflict resolution
+also reads the merge-base-to-base Git diff. Read those diffs in bounded sections.
+Copilot feedback includes the complete frozen findings and conversations.
 
 Any target-repository file may be read or changed when needed for the selected task.
 Stay focused on that task, preserve intended behavior and don't do unrelated cleanup.
@@ -332,7 +334,7 @@ For a conflict request with `stack`, rebase every open layer in
 The complete membership, including already-merged layers, stays unchanged.
 Never run `gh stack`, change stack metadata, retarget PRs, land a PR or push.
 The source helper fetches every frozen layer and the trunk. Read each layer's
-authoritative diff in `inputs.stack_diffs["<PR number>"].text`, its instructions
+complete Git diff from `layer.merge_base_sha` to `layer.frozen_sha`, its instructions
 and both histories before changing it.
 
 Start with `stack.base_sha` as the new base. For each layer, replay its own changes
@@ -421,11 +423,11 @@ For a completed conflict resolution, without native stack membership, use `merge
 identity from `inputs.identity`:
 
 ```json
-{"schema":2,"request_digest":"<frozen digest>","input_identity":{"pr_diff_sha256":"<acquired diff sha256>"},"outcome":"merge"}
+{"schema":2,"request_digest":"<frozen digest>","input_identity":{},"outcome":"merge"}
 ```
 
-Native stack resolutions use `rebase` and copy both `pr_diff_sha256` and
-`stack_diffs_sha256` from `inputs.identity`.
+Native stack resolutions use `rebase` with the same empty `input_identity`.
+Source identity is bound by the frozen commit IDs and independently fetched Git history.
 
 Package and check the result from the central workspace:
 

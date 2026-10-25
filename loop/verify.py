@@ -210,7 +210,8 @@ def verify_candidate(files, request, fetch_source=None, *, repository_dir=None):
         if diff_scope(request):
             from loop.source import snapshot_identity
             snapshot_identity(directory, request["frozen_sha"], request)
-            if loop_kind(request) != "self_review":
+            if loop_kind(request) != "self_review" and not (
+                    direct_inputs(request) and loop_kind(request) == "pr_conflict_resolver"):
                 verify_diff_source(directory, request)
         tree_entries(directory, request["frozen_sha"])
         if loop_kind(request) == "pr_consistency":

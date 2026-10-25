@@ -321,8 +321,8 @@ class TaskContractsTests(unittest.TestCase):
                 with self.assertRaisesRegex(Rejected, "ownership search is incomplete"):
                     freeze(read, 1, REVISION, 100, FIXTURE, loop_kind=kind)
 
-    def test_new_tasks_bind_live_base_and_acquire_complete_diff_on_the_runner(self):
-        for kind in (*REVIEW_KINDS, "pr_description", "pr_simplify", "pr_consistency", "pr_conflict_resolver"):
+    def test_diff_tasks_bind_live_base_and_acquire_complete_diff_on_the_runner(self):
+        for kind in (*REVIEW_KINDS, "pr_description", "pr_simplify", "pr_consistency"):
             req = task_request(kind)
             read = TaskRead(req)
             frozen = freeze(read, 1, REVISION, 100, FIXTURE, loop_kind=kind)
@@ -1135,15 +1135,25 @@ def objects(directory, texts, parents=(), subject="Commit"):
 
 
 class MergeGitTests(unittest.TestCase):
-    def test_direct_merge_verification_and_publication_import_need_no_source_artifact(self):
+    def test_large_direct_merge_preparation_verification_and_publication_import(self):
         with tempfile.TemporaryDirectory() as directory, \
                 tempfile.TemporaryDirectory() as package, \
                 tempfile.TemporaryDirectory() as imported, \
                 patch("loop.source.time.time", return_value=100):
-            req = self.context(directory)
-            diff = req.pop("pr_diff")
-            req.update(input_mode="direct", inputs={
-                "pr_diff": diff, "identity": {"pr_diff_sha256": diff["sha256"]}})
+            req = self.context(directory, large=True)
+            self.assertGreater(len(req["pr_diff"]["text"].splitlines()), 20000)
+            read = TaskRead(req)
+            call = read.call
+            def read_call(path, *args, **kwargs):
+                if kwargs.get("raw"):
+                    raise APIError(406, "Sorry, the diff exceeded the maximum number of lines (20000)")
+                return call(path, *args, **kwargs)
+            read.call = read_call
+            frozen = freeze(read, 1, REVISION, 100, FIXTURE, loop_kind="pr_conflict_resolver")
+            frozen.update(mode="publish", publication=req["publication"])
+            req = acquire(read, frozen, directory)
+            pipeline_limit(req)
+            semantic(result(req, "merge"), req)
             git(["read-tree", req["base_sha"]], directory)
             head_blob = git(["rev-parse", req["frozen_sha"] + ":Foo.java"], directory).decode().strip()
             git(["update-index", "--cacheinfo", "100644", head_blob, "Foo.java"], directory)
@@ -1152,16 +1162,16 @@ class MergeGitTests(unittest.TestCase):
                 acquire_source(target, req, self.copy_source(directory))
             candidate = reconstruct(
                 {"result.json": canonical(result(req, "merge")), "candidate.patch": patch_bytes},
-                req, fetch, package)
+                acquire(read, frozen, directory), fetch, package)
             self.assertEqual([req["frozen_sha"], req["base_sha"]], candidate["commits"][0]["parents"])
             import_candidate(imported, Path(package, "candidate.bundle"), req, candidate, fetch)
             self.assertEqual(candidate["commit"], git(
                 ["rev-parse", "candidate"], imported).decode().strip())
 
-    def context(self, directory, equal=False, conflicting=False):
+    def context(self, directory, equal=False, conflicting=False, large=False):
         git(["init", "--bare", "--quiet"], directory)
         ancestor = objects(directory, {"Foo.java": "old\n"})
-        head = objects(directory, {"Foo.java": "head\n"}, [ancestor])
+        head = objects(directory, {"Foo.java": "head\n" * (20001 if large else 1)}, [ancestor])
         base_text = "head\n" if equal else "base\n" if conflicting else "old\n"
         texts = {"Foo.java": base_text}
         if not equal and not conflicting:

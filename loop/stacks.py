@@ -323,16 +323,12 @@ def verify(files, request, fetch_source=None, repository_dir=None):
     import tempfile
     from contextlib import nullcontext
     from loop.source import acquire_source
-    from loop.verify import git, parse_json, verify_diff_source
+    from loop.verify import git, parse_json
     result = parse_json(files["result.json"])
     with (tempfile.TemporaryDirectory(prefix="stack-verify-")
           if repository_dir is None else nullcontext(repository_dir)) as directory:
         git(["init", "--bare", "--quiet"], directory)
         acquire_source(directory, request, fetch_source)
-        for layer in request["stack"]["layers"]:
-            scoped = layer_request(request, layer)
-            scoped["inputs"] = {"pr_diff": request["inputs"]["stack_diffs"][str(layer["pr"])]}
-            verify_diff_source(directory, scoped)
         tips = [layer["frozen_sha"] for layer in request["stack"]["layers"]]
         bundle = files["candidate.bundle"]
         require(bool(bundle) == (result["outcome"] == "rebase"),

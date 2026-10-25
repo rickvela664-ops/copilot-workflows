@@ -43,9 +43,8 @@ class WorkerOutputTests(unittest.TestCase):
         example = worker.split("For a completed conflict resolution,", 1)[1].split("```json\n", 1)[1]
         value = json.loads(example.split("\n```", 1)[0])
         req = task_request("pr_conflict_resolver")
-        req.update(input_mode="direct", inputs={"identity": {"pr_diff_sha256": "a" * 64}})
+        req.update(input_mode="direct", inputs={"identity": {}})
         value["request_digest"] = digest(req)
-        value["input_identity"] = req["inputs"]["identity"]
         self.assertEqual("merge", value["outcome"])
         with tempfile.TemporaryDirectory() as directory:
             self.files(directory, value, b"native merge bundle")
