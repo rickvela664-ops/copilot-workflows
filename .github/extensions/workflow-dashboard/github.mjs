@@ -303,10 +303,15 @@ export class GitHub {
                 const match = /^\s*<([^>]+)>/.exec(link);
                 if (!match) throw new GitHubError("GitHub returned an invalid PR pagination link.");
                 const url = new URL(match[1]);
-                if (url.origin !== "https://api.github.com" || url.pathname !== `/${root}`) {
+                const repository = response.data[0]?.base?.repo;
+                const numericPath = repository?.full_name === repo &&
+                    Number.isSafeInteger(repository.id) && repository.id > 0
+                    ? `/repositories/${repository.id}/pulls` : null;
+                if (url.origin !== "https://api.github.com" ||
+                    url.pathname !== `/${root}` && url.pathname !== numericPath) {
                     throw new GitHubError("PR pagination left the selected repository.");
                 }
-                next = safePath(url.pathname.slice(1) + url.search);
+                next = safePath(root + url.search);
             }
         }
         if (next) throw new GitHubError("GitHub open-PR pagination exceeds the 10,000 PR limit.");

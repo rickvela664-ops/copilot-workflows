@@ -2060,12 +2060,23 @@ function response(data, status = 200, headers = {}) {
 }
 
 test("PR pagination completes all pages, deduplicates drift, and never follows another repo", async () => {
-    let calls = 0;
-    const github = new GitHub(async () => ++calls === 1
-        ? response([pull()], 200, { Link: `<https://api.github.com/repos/${repo}/pulls?state=open&per_page=100&page=2>; rel="next"` })
-        : response([pull(), pull({ number: 13 })]));
-    assert.equal((await github.pulls(repo)).length, 2);
-    assert.equal(calls, 2);
+    const first = pull({ base: { repo: { id: 210933087, full_name: repo } } });
+    for (const path of [`repos/${repo}/pulls`, "repositories/210933087/pulls"]) {
+        const calls = [];
+        const github = new GitHub(async (args) => {
+            calls.push(args.at(-1));
+            return calls.length === 1
+                ? response([first], 200, { Link: `<https://api.github.com/${path}?state=open&per_page=100&page=2>; rel="next"` })
+                : response([first, pull({ number: 13 })]);
+        });
+        assert.deepEqual((await github.pulls(repo)).map((pr) => pr.number), [12, 13]);
+        assert.deepEqual(calls, [`repos/${repo}/pulls?state=open&per_page=100`,
+            `repos/${repo}/pulls?state=open&per_page=100&page=2`]);
+    }
+    const wrongId = new GitHub(async () => response([first], 200, {
+        Link: '<https://api.github.com/repositories/123/pulls?state=open&per_page=100&page=2>; rel="next"',
+    }));
+    await assert.rejects(wrongId.pulls(repo), /repository/);
     for (const path of [`repos/${REPOSITORIES[1]}/pulls?state=open&per_page=100&page=2`, "user", `repos/${repo}/pulls?state=closed&page=2`]) {
         const wrong = new GitHub(async () => response([], 200, { Link: `<https://api.github.com/${path}>; rel="next"` }));
         await assert.rejects(wrong.pulls(repo), /repository|outside/);
